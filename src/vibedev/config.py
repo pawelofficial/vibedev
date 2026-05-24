@@ -19,11 +19,13 @@ _VALID_PERMISSIONS: frozenset[str] = frozenset(
     {"bypassPermissions", "acceptEdits", "default", "plan"}
 )
 
-# Subagent role names accepted by ``set_team``. Kept in sync with
+# Role names accepted by ``set_team``. Kept in sync with
 # :data:`vibedev.roles.VALID_SUBAGENT_ROLES`; duplicated here so this module
 # stays importable without the Claude Agent SDK installed (useful for tests
 # and for the CLI's ``--help``).
-_VALID_SUBAGENT_ROLES: frozenset[str] = frozenset({"developer", "tester"})
+_VALID_SUBAGENT_ROLES: frozenset[str] = frozenset(
+    {"business_analyst", "developer", "tester"}
+)
 
 
 class Config(TypedDict):
@@ -77,7 +79,8 @@ def set_team(roles: list[str | tuple[str, str]]) -> None:
 
     Forms can mix freely: ``["developer", ("tester", "claude-sonnet-4-6")]``.
 
-    Currently the valid subagent roles are ``"developer"`` and ``"tester"``.
+    Currently the valid roles are ``"business_analyst"``, ``"developer"``, and
+    ``"tester"``.
     The ``"manager"`` role is implicit (it is always the main agent when a
     team is configured) and must not be included. The manager's model is
     whatever :func:`set_model` was last called with.

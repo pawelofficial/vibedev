@@ -6,10 +6,13 @@ import pytest
 
 import vibedev
 from vibedev.core import (
+    _apply_analyst_review,
+    _build_business_analyst_prompt,
     _build_developer_prompt,
     _build_readme_update_prompt,
     _build_tester_prompt,
     _extract_verdict,
+    _extract_proposed_tasks,
     _first_role_model,
     _load_or_create_team_plan,
     _mark_plan_task_done,
@@ -128,12 +131,14 @@ def test_set_team_with_model_overrides():
     try:
         set_team(
             [
+                ("business_analyst", "claude-opus-4-6"),
                 ("developer", "claude-haiku-4-5"),
                 ("developer", "claude-haiku-4-5"),
                 ("tester", "claude-sonnet-4-6"),
             ]
         )
         assert get_config()["team"] == [
+            ("business_analyst", "claude-opus-4-6"),
             ("developer", "claude-haiku-4-5"),
             ("developer", "claude-haiku-4-5"),
             ("tester", "claude-sonnet-4-6"),
@@ -231,16 +236,28 @@ def test_fallback_manager_prompt_does_not_own_normal_workflow():
 def test_coded_team_workflow_requires_developer_and_tester():
     assert _supports_coded_team_workflow([("developer", None), ("tester", None)])
     assert _supports_coded_team_workflow(
-        [("developer", "haiku"), ("developer", "haiku"), ("tester", "sonnet")]
+        [
+            ("business_analyst", "opus"),
+            ("developer", "haiku"),
+            ("developer", "haiku"),
+            ("tester", "sonnet"),
+        ]
     )
     assert not _supports_coded_team_workflow([])
+    assert not _supports_coded_team_workflow([("business_analyst", None)])
     assert not _supports_coded_team_workflow([("developer", None)])
     assert not _supports_coded_team_workflow([("tester", None)])
 
 
 def test_first_role_model_uses_first_matching_role_and_default():
-    team = [("developer", None), ("developer", "haiku"), ("tester", "sonnet")]
+    team = [
+        ("business_analyst", "opus"),
+        ("developer", None),
+        ("developer", "haiku"),
+        ("tester", "sonnet"),
+    ]
 
+    assert _first_role_model(team, "business_analyst", "opus-4-7") == "opus"
     assert _first_role_model(team, "developer", "opus") == "opus"
     assert _first_role_model(team, "tester", "opus") == "sonnet"
     assert _first_role_model(team, "designer", "opus") is None
@@ -270,6 +287,7 @@ def test_coded_workflow_prompts_leave_plan_to_python():
         "add /goodbye",
         attempt=1,
         tester_report="",
+        analyst_brief="## Acceptance Criteria\n- The /goodbye route returns JSON.",
     )
     readme_prompt = _build_readme_update_prompt(
         "add /goodbye",
@@ -278,8 +296,83 @@ def test_coded_workflow_prompts_leave_plan_to_python():
     )
 
     assert "Python owns the plan file" in developer_prompt
+    assert "Business analyst brief and acceptance criteria" in developer_prompt
+    assert "The /goodbye route returns JSON." in developer_prompt
     assert "Update `README.md`" in readme_prompt
     assert "Do not edit\n`.vibedev/plan.md`" in readme_prompt
+
+
+def test_business_analyst_prompt_receives_current_plan():
+    plan = _parse_team_plan(
+        """# vibedev plan
+
+## Goal
+Build an app.
+
+## Tasks
+- [ ] Build the first feature
+
+## History
+- 2026-05-24 - Request: build an app
+""",
+        fallback_goal="fallback",
+    )
+
+    prompt = _build_business_analyst_prompt("build an app", plan)
+
+    assert "Current Python-owned plan:" in prompt
+    assert "- [ ] Build the first feature" in prompt
+    assert "## Proposed Tasks" in prompt
+
+
+def test_extract_proposed_tasks_from_analyst_brief():
+    tasks = _extract_proposed_tasks(
+        """## Missing Requirements
+- Something else
+
+## Proposed Tasks
+- [ ] Add lineage graph search
+- Add column detail drawer
+* Add export button
+
+## Acceptance Criteria
+- Search works
+"""
+    )
+
+    assert tasks == [
+        "Add lineage graph search",
+        "Add column detail drawer",
+        "Add export button",
+    ]
+
+
+def test_apply_analyst_review_appends_missing_tasks(tmp_path):
+    plan = _load_or_create_team_plan(tmp_path, "build lineage app")
+    _apply_analyst_review(
+        tmp_path,
+        plan,
+        """## Missing Requirements
+- Need export
+
+## Proposed Tasks
+- [ ] Add lineage graph search
+- [ ] build lineage app
+
+## Acceptance Criteria
+- Search by model and column
+
+## Risks
+- Parser may be too shallow
+""",
+    )
+
+    plan_text = (tmp_path / ".vibedev" / "plan.md").read_text(encoding="utf-8")
+    updated_plan = _parse_team_plan(plan_text, fallback_goal="")
+    assert "- [ ] build lineage app" in plan_text
+    assert "- [ ] Add lineage graph search" in plan_text
+    assert [task.text for task in updated_plan.tasks].count("build lineage app") == 1
+    assert "Analyst review:" in plan_text
 
 
 def test_parse_team_plan_extracts_goal_tasks_and_history():

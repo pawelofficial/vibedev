@@ -46,3 +46,8 @@ vibedev "a flask hello world" --permissions acceptEdits --model claude-sonnet-4-
 ## Status
 
 Early. The public surface is `vibedev.prompt(...)` plus the `set_*` configurators.
+
+## Docs
+
+- [`GPTREADME.md`](GPTREADME.md) — short handoff for future ChatGPT/Cursor sessions.
+- [`docs/architecture.md`](docs/architecture.md) — architecture and workflow notes.

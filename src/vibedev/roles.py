@@ -1,10 +1,10 @@
 """Role catalog for vibedev's team mode.
 
 A *role* is a named system prompt that vibedev can assign to an agent. When
-the user calls ``vibedev.set_team([...])`` with subagent role names, vibedev:
+the user calls ``vibedev.set_team([...])`` with role names, vibedev:
 
-  - runs a Python-owned developer/tester loop when both roles are configured,
-    so verification gates completion in code, or
+  - runs a Python-owned analyst/developer/tester loop when developer and tester
+    are configured, so planning and verification gates live in code, or
   - falls back to an SDK-native manager prompt for unusual teams that do not
     include both a developer and a tester.
 
@@ -18,6 +18,31 @@ from __future__ import annotations
 from dataclasses import replace
 
 from claude_agent_sdk import AgentDefinition
+
+BUSINESS_ANALYST_PROMPT = """You are the business analyst on a vibedev team.
+
+You receive the user's request plus the current plan. Your job is to challenge
+the plan before implementation starts: identify missing requirements,
+ambiguities, risks, proposed task breakdown changes, and acceptance criteria.
+
+Do not edit files, run commands, or implement code. Return structured Markdown
+with exactly these top-level sections:
+
+## Missing Requirements
+- ...
+
+## Proposed Tasks
+- [ ] ...
+
+## Acceptance Criteria
+- ...
+
+## Risks
+- ...
+
+Keep proposed tasks atomic and implementation-ready. If the current plan is
+already sufficient, say so and leave `## Proposed Tasks` empty.
+"""
 
 DEVELOPER_PROMPT = """You are the developer on a vibedev team.
 
@@ -62,6 +87,13 @@ or:
 """
 
 SUBAGENT_ROLES: dict[str, AgentDefinition] = {
+    "business_analyst": AgentDefinition(
+        description=(
+            "Reviews the request and current plan before implementation. "
+            "Suggests missing requirements, tasks, risks, and acceptance criteria."
+        ),
+        prompt=BUSINESS_ANALYST_PROMPT,
+    ),
     "developer": AgentDefinition(
         description=(
             "Writes code, edits files, installs dependencies, runs commands. "

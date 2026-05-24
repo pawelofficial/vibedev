@@ -65,12 +65,14 @@ the workspace, so the caller can open / inspect the generated code afterwards.
 ### Team mode
 
 `set_team([...])` opts into a multi-agent run. Pass a list of **role** names
-(currently `"developer"` and `"tester"`). When both roles are configured,
-Python owns the lifecycle: read/create `.vibedev/plan.md`, append the current
-request as a pending task when needed, pick the next `[ ]` task, run developer,
-run tester, parse the tester's `VIBEDEV_VERDICT`, send failures back to the
-developer, and mark `[x]` only after tester pass. This is deliberately
-code-owned control flow rather than a manager-prompt convention.
+(currently `"business_analyst"`, `"developer"`, and `"tester"`). When developer
+and tester are configured, Python owns the lifecycle: read/create
+`.vibedev/plan.md`, append the current request as a pending task when needed,
+optionally run the business analyst against the current plan, append analyst-
+proposed tasks, pick the next `[ ]` task, run developer, run tester, parse the
+tester’s `VIBEDEV_VERDICT`, send failures back to the developer, and mark `[x]`
+only after tester pass. This is deliberately code-owned control flow rather
+than a manager-prompt convention.
 
 The SDK-native manager prompt still exists as a fallback for unusual teams
 that do not include both `"developer"` and `"tester"`. The `"manager"` role
@@ -90,6 +92,7 @@ overrides just that instance. The forms mix freely:
 ```python
 vibedev.set_model("claude-opus-4-7")    # README updater / fallback manager model
 vibedev.set_team([
+    ("business_analyst", "claude-opus-4-7"),
     ("developer", "claude-haiku-4-5"),
     ("developer", "claude-haiku-4-5"),
     ("tester",    "claude-sonnet-4-6"),
@@ -163,11 +166,12 @@ The package is intentionally small — six modules under `src/vibedev/`:
   complete. This is the biggest lever on no-team-mode behavior; when
   iterating on solo-run output quality, edit this first.
 - **`roles.py`** — the team-mode prompt registry. Holds the static
-  `DEVELOPER_PROMPT` and `TESTER_PROMPT`, the `SUBAGENT_ROLES` dict mapping
-  role name → `claude_agent_sdk.AgentDefinition` *templates* (model=None),
-  and fallback manager helpers (`build_manager_prompt` / `subagents_for`) for
-  teams that do not include both developer and tester. The normal team prompts
-  do not own plan or task orchestration. The tester prompt must end with
+  `BUSINESS_ANALYST_PROMPT`, `DEVELOPER_PROMPT`, and `TESTER_PROMPT`, the
+  `SUBAGENT_ROLES` dict mapping role name →
+  `claude_agent_sdk.AgentDefinition` *templates* (model=None), and fallback
+  manager helpers (`build_manager_prompt` / `subagents_for`) for teams that do
+  not include both developer and tester. The normal team prompts do not own
+  plan or task orchestration. The tester prompt must end with
   `VIBEDEV_VERDICT: PASS` or `VIBEDEV_VERDICT: FAIL`; `core.py` parses that
   machine-readable line to drive the fix/retest loop.
 - **`core.py`** — `prompt(...)` is the public entry point. It validates the
@@ -178,9 +182,10 @@ The package is intentionally small — six modules under `src/vibedev/`:
   developer+tester teams use the coded lifecycle in
   `_run_coded_team_workflow`; solo mode uses `ORCHESTRATOR_SYSTEM_PROMPT`;
   other team shapes use the fallback SDK-native manager prompt.
-  `_run_coded_team_workflow` owns plan creation/parsing/writing, task
-  selection, checkoff, blocker recording, and the dev/test retry policy. Every
-  `claude_agent_sdk.query(...)` message is fanned out to (a) a
+  `_run_coded_team_workflow` owns plan creation/parsing/writing, optional
+  analyst review, task selection, checkoff, blocker recording, and the dev/test
+  retry policy. Every `claude_agent_sdk.query(...)` message is fanned out to (a)
+  a
   `_TranscriptLogger` writing to `<workspace>.vibedev-logs/<UTC>.log` (a
   **sibling** of the workspace, deliberately outside it — see "Transcript
   logging" below) and (b) `_print_message` for live stdout (skipped when
@@ -218,7 +223,8 @@ The package is intentionally small — six modules under `src/vibedev/`:
 ### Multi-agent layering: coded lifecycle, SDK execution
 
 vibedev owns the high-level team lifecycle in Python when both `developer`
-and `tester` are configured. It reads/writes `.vibedev/plan.md`, selects the
+and `tester` are configured. It reads/writes `.vibedev/plan.md`, optionally
+runs `business_analyst` to challenge the plan and propose tasks, selects the
 next pending task, runs the developer agent, runs the tester agent, parses the
 tester’s `VIBEDEV_VERDICT`, sends failures back to the developer, marks the
 task complete only after tester pass, and records blockers on repeated failure.
@@ -251,6 +257,10 @@ The contract:
 - **Subsequent team runs**: Python parses the plan, appends the current prompt
   as a new pending task if it is not already listed, and resumes from the top
   `[ ]`.
+- **Business analyst review**: if configured, Python passes the user request
+  and current plan to the analyst, parses only `## Proposed Tasks` for plan
+  additions, and passes the full analyst brief into developer/tester prompts as
+  acceptance context.
 - **Team checkoff**: Python flips a task to `[x]` only after the tester returns
   `VIBEDEV_VERDICT: PASS`; repeated failures leave the task `[ ]` and append a
   blocker to `## History`.

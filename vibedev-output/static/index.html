@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Column Lineage Explorer</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Column Lineage Explorer</h1>
+            <div class="search-container">
+                <input type="text" id="search-input" placeholder="Search models and columns..." autocomplete="off">
+                <div id="search-results" class="search-results hidden"></div>
+            </div>
+        </header>
+
+        <div class="main-layout">
+            <aside id="sidebar">
+                <div class="sidebar-section">
+                    <h3>Models</h3>
+                    <div id="model-list"></div>
+                </div>
+                <div class="sidebar-section" id="detail-panel">
+                    <h3>Details</h3>
+                    <div id="detail-content">
+                        <p class="hint">Click a model or column to inspect lineage</p>
+                    </div>
+                </div>
+            </aside>
+
+            <main id="graph-area">
+                <div id="graph-controls">
+                    <button id="btn-reset" title="Reset view">Reset View</button>
+                    <button id="btn-focus-mart" title="Focus on mart_customer_ltv_segments">Focus Mart</button>
+                    <span id="selection-label"></span>
+                </div>
+                <svg id="lineage-graph"></svg>
+            </main>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

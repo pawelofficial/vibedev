@@ -15,6 +15,7 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 from vibedev.config import Config, get_config
 from vibedev.prompts import ORCHESTRATOR_SYSTEM_PROMPT
 from vibedev.roles import (
+    BUSINESS_ANALYST_PROMPT,
     DEVELOPER_PROMPT,
     TESTER_PROMPT,
     build_manager_prompt,
@@ -164,10 +165,28 @@ async def _run_coded_team_workflow(
 ) -> None:
     developer_model = _first_role_model(cfg["team"], "developer", cfg["model"])
     tester_model = _first_role_model(cfg["team"], "tester", cfg["model"])
+    analyst_model = _first_role_model(cfg["team"], "business_analyst", cfg["model"])
     assert developer_model is not None
     assert tester_model is not None
 
     plan = _load_or_create_team_plan(workspace, user_prompt)
+    analyst_brief = ""
+    if analyst_model is not None:
+        analyst_options = _options_for_role(
+            workspace,
+            cfg,
+            model=analyst_model,
+            system_prompt=BUSINESS_ANALYST_PROMPT,
+        )
+        _announce_stage("business analyst plan review", logger, quiet)
+        analyst_brief = await _run_query(
+            _build_business_analyst_prompt(user_prompt, plan),
+            analyst_options,
+            logger,
+            quiet,
+        )
+        _apply_analyst_review(workspace, plan, analyst_brief)
+
     task_index = _next_pending_task_index(plan)
     if task_index is None:
         return
@@ -198,7 +217,7 @@ async def _run_coded_team_workflow(
         label = f"developer attempt {attempt}: {task}"
         _announce_stage(label, logger, quiet)
         developer_report = await _run_query(
-            _build_developer_prompt(task, attempt, tester_report),
+            _build_developer_prompt(task, attempt, tester_report, analyst_brief),
             developer_options,
             logger,
             quiet,
@@ -207,7 +226,7 @@ async def _run_coded_team_workflow(
         label = f"tester attempt {attempt}: {task}"
         _announce_stage(label, logger, quiet)
         tester_report = await _run_query(
-            _build_tester_prompt(task, attempt, developer_report),
+            _build_tester_prompt(task, attempt, developer_report, analyst_brief),
             tester_options,
             logger,
             quiet,
@@ -303,6 +322,91 @@ def _announce_stage(label: str, logger: "_TranscriptLogger", quiet: bool) -> Non
         print(f"[vibedev] {label}", file=sys.stderr, flush=True)
 
 
+def _build_business_analyst_prompt(user_prompt: str, plan: _TeamPlan) -> str:
+    return f"""User request:
+{user_prompt}
+
+Current Python-owned plan:
+{_render_plan_for_prompt(plan)}
+
+Review the request and plan before implementation starts. Challenge the plan:
+identify missing requirements, ambiguities, risks, proposed task additions, and
+acceptance criteria.
+
+Return structured Markdown with exactly these top-level sections:
+
+## Missing Requirements
+
+## Proposed Tasks
+
+## Acceptance Criteria
+
+## Risks
+"""
+
+
+def _render_plan_for_prompt(plan: _TeamPlan) -> str:
+    lines = [
+        f"Goal: {plan.goal}",
+        "",
+        "Tasks:",
+    ]
+    for task in plan.tasks:
+        marker = "x" if task.done else " "
+        lines.append(f"- [{marker}] {task.text}")
+    if plan.history:
+        lines.extend(["", "History:"])
+        lines.extend(f"- {entry}" for entry in plan.history[-5:])
+    return "\n".join(lines)
+
+
+def _apply_analyst_review(workspace: Path, plan: _TeamPlan, analyst_brief: str) -> None:
+    proposed_tasks = _extract_proposed_tasks(analyst_brief)
+    added = False
+    for task_text in proposed_tasks:
+        if _add_plan_task_if_missing(plan, task_text):
+            added = True
+
+    if analyst_brief.strip():
+        summary = _one_line(analyst_brief)[:500]
+        plan.history.append(f"{_today()} - Analyst review: {summary}")
+        added = True
+
+    if added:
+        _write_team_plan(workspace, plan)
+
+
+def _extract_proposed_tasks(analyst_brief: str) -> list[str]:
+    lines = analyst_brief.splitlines()
+    in_section = False
+    tasks: list[str] = []
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.startswith("## "):
+            in_section = stripped.casefold() == "## proposed tasks"
+            continue
+        if not in_section:
+            continue
+
+        task = _task_text_from_markdown_bullet(stripped)
+        if task:
+            tasks.append(task)
+
+    return tasks
+
+
+def _task_text_from_markdown_bullet(line: str) -> str | None:
+    task = _parse_task_line(line)
+    if task is not None:
+        return task.text
+    for prefix in ("- ", "* "):
+        if line.startswith(prefix):
+            text = line[len(prefix) :].strip()
+            return text or None
+    return None
+
+
 def _load_or_create_team_plan(workspace: Path, user_prompt: str) -> _TeamPlan:
     path = workspace / PLAN_RELATIVE_PATH
     if path.exists():
@@ -310,7 +414,7 @@ def _load_or_create_team_plan(workspace: Path, user_prompt: str) -> _TeamPlan:
     else:
         plan = _TeamPlan(goal=_one_line(user_prompt), tasks=[], history=[])
 
-    _ensure_plan_has_task(plan, user_prompt)
+    _add_plan_task_if_missing(plan, user_prompt)
     plan.history.append(f"{_today()} - Request: {_one_line(user_prompt)}")
     _write_team_plan(workspace, plan)
     return plan
@@ -361,13 +465,15 @@ def _parse_task_line(line: str) -> _PlanTask | None:
     return None
 
 
-def _ensure_plan_has_task(plan: _TeamPlan, user_prompt: str) -> None:
-    task_text = _one_line(user_prompt)
+def _add_plan_task_if_missing(plan: _TeamPlan, task_text: str) -> bool:
+    task_text = _one_line(task_text)
     if not task_text:
-        return
+        return False
     existing = {_normalize_task(task.text) for task in plan.tasks}
     if _normalize_task(task_text) not in existing:
         plan.tasks.append(_PlanTask(done=False, text=task_text))
+        return True
+    return False
 
 
 def _next_pending_task_index(plan: _TeamPlan) -> int | None:
@@ -440,10 +546,17 @@ def _normalize_task(text: str) -> str:
     return _one_line(text).casefold()
 
 
-def _build_developer_prompt(task: str, attempt: int, tester_report: str) -> str:
+def _build_developer_prompt(
+    task: str,
+    attempt: int,
+    tester_report: str,
+    analyst_brief: str = "",
+) -> str:
+    analyst_section = _analyst_context_section(analyst_brief)
     if attempt == 1:
         return f"""Task:
 {task}
+{analyst_section}
 
 Implement this task inside the current workspace. Python owns the plan file and
 will send your work to the tester before marking anything complete.
@@ -454,6 +567,7 @@ should verify.
 
     return f"""Task:
 {task}
+{analyst_section}
 
 The tester found failures in the previous attempt. Fix the implementation
 without weakening the requested behavior or deleting useful tests.
@@ -466,9 +580,16 @@ should re-run.
 """
 
 
-def _build_tester_prompt(task: str, attempt: int, developer_report: str) -> str:
+def _build_tester_prompt(
+    task: str,
+    attempt: int,
+    developer_report: str,
+    analyst_brief: str = "",
+) -> str:
+    analyst_section = _analyst_context_section(analyst_brief)
     return f"""Task:
 {task}
+{analyst_section}
 
 Developer attempt: {attempt}
 
@@ -483,6 +604,16 @@ End your response with exactly one verdict line:
 VIBEDEV_VERDICT: PASS
 or
 VIBEDEV_VERDICT: FAIL
+"""
+
+
+def _analyst_context_section(analyst_brief: str) -> str:
+    if not analyst_brief.strip():
+        return ""
+    return f"""
+
+Business analyst brief and acceptance criteria:
+{analyst_brief.strip()}
 """
 
 
