@@ -17,6 +17,7 @@ from vibedev.prompts import ORCHESTRATOR_SYSTEM_PROMPT
 from vibedev.roles import (
     BUSINESS_ANALYST_PROMPT,
     DEVELOPER_PROMPT,
+    KNOWLEDGE_CURATOR_PROMPT,
     TESTER_PROMPT,
     build_manager_prompt,
     subagents_for,
@@ -26,6 +27,9 @@ from vibedev.workspace import ensure_workspace
 MAX_TEAM_FIX_ATTEMPTS = 3
 PLAN_RELATIVE_PATH = Path(".vibedev") / "plan.md"
 COMMON_KNOWLEDGE_RELATIVE_PATH = Path(".vibedev") / "common_knowledge.md"
+GOAL_SUMMARY_MAX_CHARS = 220
+TASK_SUMMARY_MAX_CHARS = 240
+HISTORY_SUMMARY_MAX_CHARS = 320
 
 README_UPDATER_SYSTEM_PROMPT = """You update README files after a vibedev team run.
 
@@ -172,6 +176,22 @@ async def _run_coded_team_workflow(
 
     plan = _load_or_create_team_plan(workspace, user_prompt)
     common_knowledge = _write_common_knowledge(workspace, user_prompt, plan)
+    knowledge_curator_report = await _run_ad_hoc_agent(
+        workspace,
+        cfg,
+        role_name="knowledge curator",
+        model=cfg["model"],
+        system_prompt=KNOWLEDGE_CURATOR_PROMPT,
+        prompt=_build_knowledge_curator_prompt(user_prompt, plan, common_knowledge),
+        logger=logger,
+        quiet=quiet,
+    )
+    common_knowledge = _write_common_knowledge(
+        workspace,
+        user_prompt,
+        plan,
+        curated_context=knowledge_curator_report,
+    )
     analyst_brief = ""
     if analyst_model is not None:
         analyst_options = _options_for_role(
@@ -188,7 +208,12 @@ async def _run_coded_team_workflow(
             quiet,
         )
         _apply_analyst_review(workspace, plan, analyst_brief)
-        common_knowledge = _write_common_knowledge(workspace, user_prompt, plan)
+        common_knowledge = _write_common_knowledge(
+            workspace,
+            user_prompt,
+            plan,
+            curated_context=knowledge_curator_report,
+        )
 
     task_index = _next_pending_task_index(plan)
     if task_index is None:
@@ -264,7 +289,12 @@ async def _run_coded_team_workflow(
                 quiet,
             )
             _restore_plan_if_changed(workspace, plan_text_after_checkoff)
-            _write_common_knowledge(workspace, user_prompt, plan)
+            _write_common_knowledge(
+                workspace,
+                user_prompt,
+                plan,
+                curated_context=knowledge_curator_report,
+            )
             return
 
         if verdict is None:
@@ -341,6 +371,47 @@ def _announce_stage(label: str, logger: "_TranscriptLogger", quiet: bool) -> Non
     logger.write_stage(label)
     if not quiet:
         print(f"[vibedev] {label}", file=sys.stderr, flush=True)
+
+
+async def _run_ad_hoc_agent(
+    workspace: Path,
+    cfg: Config,
+    *,
+    role_name: str,
+    model: str,
+    system_prompt: str,
+    prompt: str,
+    logger: "_TranscriptLogger",
+    quiet: bool,
+) -> str:
+    _announce_stage(f"ad hoc {role_name} review", logger, quiet)
+    options = _options_for_role(
+        workspace,
+        cfg,
+        model=model,
+        system_prompt=system_prompt,
+    )
+    return await _run_query(prompt, options, logger, quiet)
+
+
+def _build_knowledge_curator_prompt(
+    user_prompt: str,
+    plan: _TeamPlan,
+    common_knowledge: str = "",
+) -> str:
+    return f"""User request:
+{_summarize_task(user_prompt)}
+
+Current Python-owned plan:
+{_render_plan_for_prompt(plan)}
+
+Current generated common knowledge draft:
+{common_knowledge.strip() or "(not written yet)"}
+
+Inspect the workspace and improve the shared project understanding for the team.
+Return only the structured Markdown requested by your system prompt. Do not edit
+files; Python will write your report into `.vibedev/common_knowledge.md`.
+"""
 
 
 def _build_business_analyst_prompt(
@@ -433,15 +504,32 @@ def _task_text_from_markdown_bullet(line: str) -> str | None:
     return None
 
 
-def _write_common_knowledge(workspace: Path, user_prompt: str, plan: _TeamPlan) -> str:
+def _write_common_knowledge(
+    workspace: Path,
+    user_prompt: str,
+    plan: _TeamPlan,
+    *,
+    curated_context: str = "",
+) -> str:
     path = workspace / COMMON_KNOWLEDGE_RELATIVE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = _build_common_knowledge(workspace, user_prompt, plan)
+    content = _build_common_knowledge(
+        workspace,
+        user_prompt,
+        plan,
+        curated_context=curated_context,
+    )
     path.write_text(content, encoding="utf-8")
     return content
 
 
-def _build_common_knowledge(workspace: Path, user_prompt: str, plan: _TeamPlan) -> str:
+def _build_common_knowledge(
+    workspace: Path,
+    user_prompt: str,
+    plan: _TeamPlan,
+    *,
+    curated_context: str = "",
+) -> str:
     docs = _workspace_files_matching(
         workspace,
         lambda path: path.suffix.lower() == ".md" or path.name.lower() == "readme",
@@ -466,10 +554,10 @@ def _build_common_knowledge(workspace: Path, user_prompt: str, plan: _TeamPlan) 
         "It captures shared project context; Python owns workflow state in the plan.",
         "",
         "## Project Goal",
-        plan.goal or _one_line(user_prompt),
+        _summarize_goal(plan.goal or user_prompt),
         "",
         "## Current Request",
-        _one_line(user_prompt),
+        _summarize_task(user_prompt),
         "",
         "## Important Paths",
         f"- Plan: `{PLAN_RELATIVE_PATH.as_posix()}`",
@@ -480,13 +568,22 @@ def _build_common_knowledge(workspace: Path, user_prompt: str, plan: _TeamPlan) 
     ]
     for task in plan.tasks:
         marker = "x" if task.done else " "
-        lines.append(f"- [{marker}] {task.text}")
+        lines.append(f"- [{marker}] {_summarize_task(task.text)}")
 
     lines.extend(["", "## Recent Plan History"])
     if plan.history:
-        lines.extend(f"- {entry}" for entry in plan.history[-8:])
+        lines.extend(f"- {_summarize_history_entry(entry)}" for entry in plan.history[-8:])
     else:
         lines.append("- No history yet.")
+
+    if curated_context.strip():
+        lines.extend(
+            [
+                "",
+                "## Curated Project Context",
+                curated_context.strip(),
+            ]
+        )
 
     lines.extend(["", "## Known Documentation"])
     lines.extend(_markdown_path_list(docs))
@@ -537,6 +634,7 @@ def _workspace_files_matching(
 def _is_ignored_common_knowledge_path(path: Path, workspace: Path) -> bool:
     rel_parts = path.relative_to(workspace).parts
     ignored = {
+        ".vibedev",
         ".git",
         ".mypy_cache",
         ".pytest_cache",
@@ -560,10 +658,11 @@ def _load_or_create_team_plan(workspace: Path, user_prompt: str) -> _TeamPlan:
     if path.exists():
         plan = _parse_team_plan(path.read_text(encoding="utf-8"), user_prompt)
     else:
-        plan = _TeamPlan(goal=_one_line(user_prompt), tasks=[], history=[])
+        plan = _TeamPlan(goal=_summarize_goal(user_prompt), tasks=[], history=[])
 
-    _add_plan_task_if_missing(plan, user_prompt)
-    plan.history.append(f"{_today()} - Request: {_one_line(user_prompt)}")
+    _compact_team_plan(plan)
+    _add_plan_task_if_missing(plan, _summarize_task(user_prompt))
+    plan.history.append(f"{_today()} - Request: {_summarize_task(user_prompt)}")
     _write_team_plan(workspace, plan)
     return plan
 
@@ -599,7 +698,7 @@ def _parse_team_plan(text: str, fallback_goal: str) -> _TeamPlan:
         elif section == "history" and stripped.startswith("- "):
             history.append(stripped[2:].strip())
 
-    goal = " ".join(goal_lines).strip() or _one_line(fallback_goal)
+    goal = " ".join(goal_lines).strip() or _summarize_goal(fallback_goal)
     return _TeamPlan(goal=goal, tasks=tasks, history=history)
 
 
@@ -614,7 +713,7 @@ def _parse_task_line(line: str) -> _PlanTask | None:
 
 
 def _add_plan_task_if_missing(plan: _TeamPlan, task_text: str) -> bool:
-    task_text = _one_line(task_text)
+    task_text = _summarize_task(task_text)
     if not task_text:
         return False
     existing = {_normalize_task(task.text) for task in plan.tasks}
@@ -633,7 +732,7 @@ def _next_pending_task_index(plan: _TeamPlan) -> int | None:
 
 def _mark_plan_task_done(workspace: Path, plan: _TeamPlan, task_index: int) -> None:
     plan.tasks[task_index].done = True
-    plan.history.append(f"{_today()} - Completed: {plan.tasks[task_index].text}")
+    plan.history.append(f"{_today()} - Completed: {_summarize_task(plan.tasks[task_index].text)}")
     _write_team_plan(workspace, plan)
 
 
@@ -644,7 +743,8 @@ def _record_plan_blocker(
     tester_report: str,
 ) -> None:
     plan.tasks[task_index].done = False
-    summary = _one_line(tester_report)[:500] or "tester did not report a passing verdict"
+    summary = _truncate(_one_line(tester_report), HISTORY_SUMMARY_MAX_CHARS)
+    summary = summary or "tester did not report a passing verdict"
     plan.history.append(
         f"{_today()} - Blocked: {plan.tasks[task_index].text} ({summary})"
     )
@@ -654,21 +754,22 @@ def _record_plan_blocker(
 def _write_team_plan(workspace: Path, plan: _TeamPlan) -> None:
     path = workspace / PLAN_RELATIVE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
+    _compact_team_plan(plan)
 
     lines = [
         "# vibedev plan",
         "",
         "## Goal",
-        plan.goal.strip(),
+        _summarize_goal(plan.goal),
         "",
         "## Tasks",
     ]
     for task in plan.tasks:
         marker = "x" if task.done else " "
-        lines.append(f"- [{marker}] {task.text}")
+        lines.append(f"- [{marker}] {_summarize_task(task.text)}")
     lines.extend(["", "## History"])
     for entry in plan.history:
-        lines.append(f"- {entry}")
+        lines.append(f"- {_summarize_history_entry(entry)}")
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
@@ -684,6 +785,91 @@ def _restore_plan_if_changed(workspace: Path, expected_text: str) -> None:
 
 def _today() -> str:
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def _compact_team_plan(plan: _TeamPlan) -> None:
+    plan.goal = _summarize_goal(plan.goal)
+    plan.tasks = [_PlanTask(done=task.done, text=_summarize_task(task.text)) for task in plan.tasks]
+    plan.history = [_summarize_history_entry(entry) for entry in plan.history]
+
+
+def _summarize_goal(text: str) -> str:
+    summary = _extract_prompt_summary(text)
+    return _truncate(summary, GOAL_SUMMARY_MAX_CHARS)
+
+
+def _summarize_task(text: str) -> str:
+    summary = _extract_feature_summary(text) or _extract_prompt_summary(text)
+    return _truncate(summary, TASK_SUMMARY_MAX_CHARS)
+
+
+def _summarize_history_entry(entry: str) -> str:
+    prefix, sep, rest = entry.partition(": ")
+    if sep and (" - Request" in prefix or " - Completed" in prefix or " - Blocked" in prefix):
+        return f"{prefix}: {_truncate(_summarize_task(rest), HISTORY_SUMMARY_MAX_CHARS)}"
+    return _truncate(_one_line(entry), HISTORY_SUMMARY_MAX_CHARS)
+
+
+def _extract_feature_summary(text: str) -> str:
+    one_line = _one_line(text)
+    one_line_lower = one_line.casefold()
+    for marker in ("implement this feature:", "implement this ui feature:"):
+        marker_index = one_line_lower.find(marker)
+        if marker_index != -1:
+            after_marker = one_line[marker_index + len(marker) :].strip()
+            if after_marker:
+                return _first_sentence(after_marker)
+
+    lines = [line.strip() for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        normalized = line.rstrip(":").casefold()
+        if normalized in {"implement this feature", "implement this ui feature"}:
+            for candidate in lines[index + 1 :]:
+                if candidate and not candidate.endswith(":"):
+                    return _strip_list_marker(candidate)
+    return ""
+
+
+def _extract_prompt_summary(text: str) -> str:
+    lines = [_strip_list_marker(line.strip()) for line in text.splitlines() if line.strip()]
+    skip_prefixes = (
+        "continue the existing",
+        "do not rebuild",
+        "requirements:",
+        "core requirements:",
+        "lineage extraction requirements:",
+        "implementation guidance:",
+    )
+    for line in lines:
+        if line.casefold().startswith(skip_prefixes):
+            continue
+        if line.endswith(":"):
+            continue
+        return _first_sentence(line)
+    return _one_line(text)
+
+
+def _strip_list_marker(text: str) -> str:
+    for prefix in ("- [ ] ", "- [x] ", "- [X] ", "- ", "* "):
+        if text.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return text
+
+
+def _first_sentence(text: str) -> str:
+    one_line = _one_line(text)
+    for delimiter in (". ", "? ", "! "):
+        head, sep, _tail = one_line.partition(delimiter)
+        if sep:
+            return f"{head}{sep.strip()}"
+    return one_line
+
+
+def _truncate(text: str, max_chars: int) -> str:
+    text = _one_line(text)
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "..."
 
 
 def _one_line(text: str) -> str:

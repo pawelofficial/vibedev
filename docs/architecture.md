@@ -54,8 +54,9 @@ This path is intentionally simple and preserves the original wrapper design.
 ## Normal Team Mode
 
 Normal team mode is active when the configured team contains both `developer`
-and `tester`. If `business_analyst` is also configured, Python runs it as a
-planning-review stage before choosing the next task.
+and `tester`. Python also runs an internal ad hoc `knowledge_curator` at the
+start of every coded team run. If `business_analyst` is configured, Python runs
+it as a planning-review stage before choosing the next task.
 
 This mode is code-owned in `core.py`, not manager-prompt-owned. The important
 invariant is:
@@ -67,27 +68,31 @@ The coded flow is:
 1. Load or create `.vibedev/plan.md`.
 2. Append the current user prompt as a pending task if it is not already in the
    plan.
-3. Write `.vibedev/common_knowledge.md` with shared workspace context.
-4. If `business_analyst` exists, run it against the user request, current
+3. Write a draft `.vibedev/common_knowledge.md` with shared workspace context.
+4. Run the ad hoc knowledge curator so it can inspect the workspace and return
+   semantic project context.
+5. Rewrite `.vibedev/common_knowledge.md` with the curator report included.
+6. If `business_analyst` exists, run it against the user request, current
    plan, and a pointer to the common knowledge file.
-5. Parse the analyst's `## Proposed Tasks` section and append missing tasks to
+7. Parse the analyst's `## Proposed Tasks` section and append missing tasks to
    the Python-owned plan.
-6. Refresh common knowledge after analyst plan changes.
-7. Pass the common knowledge path/purpose and the analyst brief to developer
+8. Refresh common knowledge after analyst plan changes, preserving the curator
+   report.
+9. Pass the common knowledge path/purpose and the analyst brief to developer
    and tester as context.
-8. Select the first pending task.
-9. Run the developer agent on that task.
-10. Run the tester agent on the developer report.
-11. Parse the tester's verdict line:
+10. Select the first pending task.
+11. Run the developer agent on that task.
+12. Run the tester agent on the developer report.
+13. Parse the tester's verdict line:
    - `VIBEDEV_VERDICT: PASS`
    - `VIBEDEV_VERDICT: FAIL`
-12. On pass, mark the task done in the plan.
-13. On fail or missing verdict, feed the tester report back to the developer and
+14. On pass, mark the task done in the plan.
+15. On fail or missing verdict, feed the tester report back to the developer and
    retry.
-14. After `MAX_TEAM_FIX_ATTEMPTS`, leave the task pending and record a blocker
+16. After `MAX_TEAM_FIX_ATTEMPTS`, leave the task pending and record a blocker
    in plan history.
-15. After pass, run a README updater agent with the common knowledge pointer.
-16. Restore `.vibedev/plan.md` if the README updater agent edits it.
+17. After pass, run a README updater agent with the common knowledge pointer.
+18. Restore `.vibedev/plan.md` if the README updater agent edits it.
 
 The business analyst, developer, and tester prompts in `roles.py` describe role
 behavior only. They do not own plan lifecycle, task selection, checkoff, retry
@@ -124,6 +129,13 @@ team workflow. It includes:
 - discovered tests
 - notable project files
 - team workflow rules
+
+The `knowledge_curator` is an internal ad hoc role, not a public `set_team`
+entry. It runs once at the beginning of each coded team deploy, reads relevant
+workspace files when useful, and returns structured Markdown with project
+overview, architecture notes, important files, commands, and risks. Python then
+writes that report into `## Curated Project Context`. The agent does not edit
+the file directly.
 
 Python injects the common knowledge path and purpose into business analyst,
 developer, tester, and README-updater prompts. It does not inject the full file
@@ -174,8 +186,12 @@ update the helpers in `core.py` and the tests in `tests/test_smoke.py`.
 - `DEVELOPER_PROMPT`
 - `TESTER_PROMPT`
 - `BUSINESS_ANALYST_PROMPT`
+- `KNOWLEDGE_CURATOR_PROMPT`
 - fallback manager prompt helpers
 - `SUBAGENT_ROLES`
+
+The knowledge curator is deliberately not in `SUBAGENT_ROLES`; users do not
+configure it with `set_team`. It is a Python-owned ad hoc stage.
 
 The business analyst should challenge the plan and produce acceptance criteria,
 but it does not edit files or plan state directly.
@@ -199,6 +215,8 @@ The smoke suite currently covers:
 - team plan parsing/writing
 - task completion and blocker recording
 - plan restoration after README updater runs
+- prompt-derived plan/common-knowledge compaction
+- curated common knowledge insertion
 
 Run:
 

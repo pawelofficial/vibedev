@@ -5,11 +5,13 @@ from __future__ import annotations
 import pytest
 
 import vibedev
+import vibedev.core as core
 from vibedev.core import (
     _apply_analyst_review,
     _build_business_analyst_prompt,
     _build_common_knowledge,
     _build_developer_prompt,
+    _build_knowledge_curator_prompt,
     _build_readme_update_prompt,
     _build_tester_prompt,
     _extract_verdict,
@@ -21,6 +23,9 @@ from vibedev.core import (
     _parse_team_plan,
     _record_plan_blocker,
     _restore_plan_if_changed,
+    _summarize_goal,
+    _summarize_history_entry,
+    _summarize_task,
     _supports_coded_team_workflow,
     _write_common_knowledge,
 )
@@ -351,6 +356,36 @@ Build an app.
     assert "## Proposed Tasks" in prompt
 
 
+def test_knowledge_curator_prompt_receives_plan_and_draft_context():
+    plan = _parse_team_plan(
+        """# vibedev plan
+
+## Goal
+Build an app.
+
+## Tasks
+- [ ] Build the first feature
+
+## History
+- 2026-05-24 - Request: build an app
+""",
+        fallback_goal="fallback",
+    )
+
+    prompt = _build_knowledge_curator_prompt(
+        "build an app with many detailed requirements",
+        plan,
+        common_knowledge="# Common Knowledge\n## Known Tests\n- `tests/test_app.py`",
+    )
+
+    assert "Current Python-owned plan:" in prompt
+    assert "- [ ] Build the first feature" in prompt
+    assert "Current generated common knowledge draft:" in prompt
+    assert "`tests/test_app.py`" in prompt
+    assert "Do not edit" in prompt
+    assert "Python will write your report" in prompt
+
+
 def test_extract_proposed_tasks_from_analyst_brief():
     tasks = _extract_proposed_tasks(
         """## Missing Requirements
@@ -427,6 +462,180 @@ def test_write_common_knowledge_creates_workspace_file(tmp_path):
     assert path.read_text(encoding="utf-8") == content
     assert "## Team Workflow" in content
     assert "Python owns plan parsing" in content
+
+
+def test_write_common_knowledge_includes_curated_context(tmp_path):
+    plan = _load_or_create_team_plan(tmp_path, "build demo app")
+    content = _write_common_knowledge(
+        tmp_path,
+        "build demo app",
+        plan,
+        curated_context="## Project Overview\n- Flask app with JSON routes.",
+    )
+
+    assert "## Curated Project Context" in content
+    assert "## Project Overview" in content
+    assert "Flask app with JSON routes." in content
+
+
+def test_coded_team_workflow_runs_knowledge_curator_first(tmp_path, monkeypatch):
+    calls: list[str] = []
+
+    async def fake_run_query(prompt, options, logger, quiet):  # noqa: ANN001, ARG001
+        calls.append(prompt)
+        if "Current generated common knowledge draft:" in prompt:
+            return "## Project Overview\n- Curated workspace context."
+        if "Current Python-owned plan:" in prompt:
+            return """## Missing Requirements
+
+## Proposed Tasks
+
+## Acceptance Criteria
+- Works.
+
+## Risks
+"""
+        if "End your response with exactly one verdict line:" in prompt:
+            return "verified\nVIBEDEV_VERDICT: PASS"
+        return "developer or README report"
+
+    class Logger:
+        def __init__(self) -> None:
+            self.stages: list[str] = []
+
+        def write_stage(self, label: str) -> None:
+            self.stages.append(label)
+
+    monkeypatch.setattr(core, "_run_query", fake_run_query)
+    cfg = {
+        "permission_mode": "bypassPermissions",
+        "model": "claude-opus-4-7",
+        "workspace_root": str(tmp_path),
+        "team": [("business_analyst", None), ("developer", None), ("tester", None)],
+    }
+
+    import anyio
+
+    anyio.run(
+        core._run_coded_team_workflow,
+        "build demo app",
+        tmp_path,
+        cfg,
+        True,
+        Logger(),
+    )
+
+    common_knowledge = (tmp_path / ".vibedev" / "common_knowledge.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert calls[0].startswith("User request:")
+    assert "Current generated common knowledge draft:" in calls[0]
+    assert "Curated workspace context." in common_knowledge
+
+
+def test_prompt_summaries_do_not_copy_full_prompt():
+    startup_prompt = """
+Build a column-lineage web app for the SQL models in schema.txt.
+
+Core requirements:
+- Show SQL tables/views as model nodes.
+- Show column-to-column lineage edges.
+
+Implementation guidance:
+- Include tests for lineage extraction.
+"""
+    feature_prompt = """
+Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
+
+Implement this feature:
+Users should be able to drag and reposition lineage graph nodes.
+
+Requirements:
+- Preserve existing parsing behavior.
+- Keep edges connected.
+"""
+
+    assert _summarize_goal(startup_prompt) == (
+        "Build a column-lineage web app for the SQL models in schema.txt."
+    )
+    assert _summarize_task(feature_prompt) == (
+        "Users should be able to drag and reposition lineage graph nodes."
+    )
+    assert _summarize_task(
+        "Continue the existing app. Implement this UI feature: Users should drag nodes. Requirements: keep edges connected."
+    ) == "Users should drag nodes."
+    assert "Core requirements" not in _summarize_goal(startup_prompt)
+    assert "Requirements" not in _summarize_task(feature_prompt)
+
+
+def test_load_or_create_team_plan_compacts_verbose_prompts(tmp_path):
+    verbose_prompt = """
+Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
+
+Implement this feature:
+Users should be able to drag and reposition lineage graph nodes.
+
+Requirements:
+- Preserve existing parsing behavior.
+- Keep edges connected.
+"""
+
+    plan = _load_or_create_team_plan(tmp_path, verbose_prompt)
+    plan_text = (tmp_path / ".vibedev" / "plan.md").read_text(encoding="utf-8")
+
+    assert plan.goal == "Users should be able to drag and reposition lineage graph nodes."
+    assert [task.text for task in plan.tasks] == [
+        "Users should be able to drag and reposition lineage graph nodes."
+    ]
+    assert "Do not rebuild it from scratch" not in plan_text
+    assert "Requirements:" not in plan_text
+    assert "Keep edges connected" not in plan_text
+
+
+def test_common_knowledge_uses_compact_goal_task_and_history(tmp_path):
+    verbose_prompt = """
+Build a column-lineage web app for the SQL models in schema.txt.
+
+Core requirements:
+- Show SQL tables/views as model nodes.
+- Show column-to-column lineage edges.
+"""
+    plan = _load_or_create_team_plan(tmp_path, verbose_prompt)
+    common_knowledge = _build_common_knowledge(tmp_path, verbose_prompt, plan)
+
+    assert "Build a column-lineage web app for the SQL models in schema.txt." in common_knowledge
+    assert "Core requirements" not in common_knowledge
+    assert "Show SQL tables/views as model nodes" not in common_knowledge
+    assert "`.vibedev/plan.md`" in common_knowledge
+
+
+def test_common_knowledge_discovery_ignores_vibedev_internal_files(tmp_path):
+    internal = tmp_path / ".vibedev"
+    internal.mkdir()
+    (internal / "plan.md").write_text("# plan\n", encoding="utf-8")
+    (internal / "common_knowledge.md").write_text("# knowledge\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    plan = _load_or_create_team_plan(tmp_path, "build demo app")
+
+    common_knowledge = _build_common_knowledge(tmp_path, "build demo app", plan)
+    known_docs = common_knowledge.split("## Known Documentation", maxsplit=1)[1]
+
+    assert "- `README.md`" in known_docs
+    assert "- `.vibedev/plan.md`" not in known_docs
+    assert "- `.vibedev/common_knowledge.md`" not in known_docs
+
+
+def test_summarize_history_entry_preserves_event_prefix():
+    entry = (
+        "2026-05-24 - Request: Continue the existing lineage app in this workspace. "
+        "Do not rebuild it from scratch.\n\nImplement this feature:\n"
+        "Users should drag nodes.\n\nRequirements:\n- Keep edges connected."
+    )
+
+    assert _summarize_history_entry(entry) == (
+        "2026-05-24 - Request: Users should drag nodes."
+    )
 
 
 def test_parse_team_plan_extracts_goal_tasks_and_history():

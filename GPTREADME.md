@@ -40,23 +40,27 @@ review stage:
 1. Python reads or creates `.vibedev/plan.md` inside the target workspace.
 2. Python appends the current prompt as a pending task if it is not already
    listed.
-3. Python writes `.vibedev/common_knowledge.md` with shared workspace context.
-4. Python optionally runs `business_analyst` against the request, current plan,
+3. Python writes a draft `.vibedev/common_knowledge.md` with shared workspace
+   context.
+4. Python runs an internal ad hoc `knowledge_curator` at the beginning of each
+   coded team deploy. It inspects the workspace and returns structured project
+   context; Python writes that report into common knowledge.
+5. Python optionally runs `business_analyst` against the request, current plan,
    and a pointer to common knowledge.
-5. Python parses the analyst's `## Proposed Tasks` section and appends missing
+6. Python parses the analyst's `## Proposed Tasks` section and appends missing
    tasks.
-6. Python passes the common knowledge path/purpose and the full analyst brief
+7. Python passes the common knowledge path/purpose and the full analyst brief
    to developer and tester as context.
-7. Python selects the first `[ ]` task.
-8. Python runs the developer agent on that one task.
-9. Python runs the tester agent on the developer result.
-10. Python parses `VIBEDEV_VERDICT: PASS` or `VIBEDEV_VERDICT: FAIL`.
-11. On fail or missing verdict, Python sends the tester report back to the
+8. Python selects the first `[ ]` task.
+9. Python runs the developer agent on that one task.
+10. Python runs the tester agent on the developer result.
+11. Python parses `VIBEDEV_VERDICT: PASS` or `VIBEDEV_VERDICT: FAIL`.
+12. On fail or missing verdict, Python sends the tester report back to the
    developer, up to `MAX_TEAM_FIX_ATTEMPTS`.
-12. Only Python marks the plan item `[x]`, and only after tester pass.
-13. If retries are exhausted, Python leaves the task pending and records a
+13. Only Python marks the plan item `[x]`, and only after tester pass.
+14. If retries are exhausted, Python leaves the task pending and records a
    blocker in plan history.
-14. A README-updater agent may update `README.md`, but Python restores
+15. A README-updater agent may update `README.md`, but Python restores
     `.vibedev/plan.md` if that agent touches it.
 
 The old SDK-native manager prompt remains only as a fallback for unusual teams
@@ -107,7 +111,10 @@ runs require the Claude Code CLI installed and authenticated.
 - `.vibedev/plan.md` is inside the generated workspace because team and solo
   runs need resumability.
 - `.vibedev/common_knowledge.md` is generated in team mode. Prompts mention its
-  path and purpose, but do not inject the full contents.
+  path and purpose, but do not inject the full contents. It now includes a
+  Python-written `knowledge_curator` report from an internal ad hoc agent.
+- Prompt-derived plan and common-knowledge entries are compacted so large user
+  prompts do not get copied wholesale into `.vibedev/plan.md`.
 - Transcript logs live in a sibling directory
   `<workspace>.vibedev-logs/` so generated agents do not read prior logs as
   ordinary workspace context.
@@ -120,6 +127,8 @@ runs require the Claude Code CLI installed and authenticated.
   prompt. The normal developer+tester lifecycle is code-owned.
 - `business_analyst` may challenge the plan, but only Python applies its
   proposed tasks to `.vibedev/plan.md`.
+- `knowledge_curator` is internal and ad hoc; do not add it to public
+  `set_team(...)` validation unless intentionally expanding the API.
 - Common knowledge is shared context, not workflow state. Do not let agents
   own plan checkoff through it.
 - Keep long-running process rules in prompts. Agents must not leave dev
