@@ -14,6 +14,8 @@ from vibedev.core import (
     _build_knowledge_curator_prompt,
     _build_readme_update_prompt,
     _build_tester_prompt,
+    _conversation_log_path,
+    _ConversationLogger,
     _current_request_task_index,
     _extract_verdict,
     _extract_proposed_tasks,
@@ -39,6 +41,14 @@ from vibedev.config import (
 )
 from vibedev.roles import build_manager_prompt
 from vibedev.workspace import ensure_workspace
+
+
+class _DummyConversationLogger:
+    def __init__(self) -> None:
+        self.turns: list[tuple[str, str, str]] = []
+
+    def log_turn(self, label: str, prompt: str, response: str) -> None:
+        self.turns.append((label, prompt, response))
 
 
 def test_public_api_exports():
@@ -101,6 +111,44 @@ def test_ensure_workspace_creates_parents(tmp_path):
     target = tmp_path / "a" / "b" / "c"
     ws = ensure_workspace(target)
     assert ws.is_dir()
+
+
+def test_conversation_log_path_sits_next_to_transcript(tmp_path):
+    transcript_path = tmp_path / "20260524T123456Z.log"
+
+    assert _conversation_log_path(transcript_path) == (
+        tmp_path / "20260524T123456Z.conversation.md"
+    )
+
+
+def test_conversation_logger_writes_prompt_response_without_tool_details(tmp_path):
+    path = tmp_path / "run.conversation.md"
+    cfg = {
+        "permission_mode": "bypassPermissions",
+        "model": "claude-opus-4-7",
+        "workspace_root": str(tmp_path),
+        "team": [("developer", None), ("tester", "sonnet")],
+    }
+
+    with _ConversationLogger(path) as logger:
+        logger.write_header("build app", tmp_path, cfg, tmp_path / "run.log")
+        logger.log_turn(
+            "Developer Attempt 1",
+            "Task:\nBuild app",
+            "Changed `app.py`.",
+        )
+        logger.write_footer()
+
+    content = path.read_text(encoding="utf-8")
+
+    assert "# vibedev Conversation Log" in content
+    assert "## User Prompt" in content
+    assert "## Developer Attempt 1" in content
+    assert "### Prompt" in content
+    assert "Task:\nBuild app" in content
+    assert "### Response" in content
+    assert "Changed `app.py`." in content
+    assert "tool_result" not in content
 
 
 def test_set_workspace_root_roundtrip():
@@ -539,15 +587,14 @@ def test_coded_team_workflow_runs_knowledge_curator_first(tmp_path, monkeypatch)
         "team": [("business_analyst", None), ("developer", None), ("tester", None)],
     }
 
-    import anyio
-
-    anyio.run(
+    core.anyio.run(
         core._run_coded_team_workflow,
         "build demo app",
         tmp_path,
         cfg,
         True,
         Logger(),
+        _DummyConversationLogger(),
     )
 
     common_knowledge = (tmp_path / ".vibedev" / "common_knowledge.md").read_text(
@@ -594,15 +641,14 @@ def test_coded_team_workflow_marks_analyst_subtasks_done_after_parent_pass(
         "team": [("business_analyst", None), ("developer", None), ("tester", None)],
     }
 
-    import anyio
-
-    anyio.run(
+    core.anyio.run(
         core._run_coded_team_workflow,
         "Implement this refactor: Modularize backend",
         tmp_path,
         cfg,
         True,
         Logger(),
+        _DummyConversationLogger(),
     )
 
     plan_text = (tmp_path / ".vibedev" / "plan.md").read_text(encoding="utf-8")
@@ -665,15 +711,14 @@ Build an app.
         "team": [("business_analyst", None), ("developer", None), ("tester", None)],
     }
 
-    import anyio
-
-    anyio.run(
+    core.anyio.run(
         core._run_coded_team_workflow,
         "Implement this refactor: Modularize backend",
         tmp_path,
         cfg,
         True,
         Logger(),
+        _DummyConversationLogger(),
     )
 
     assert developer_prompts

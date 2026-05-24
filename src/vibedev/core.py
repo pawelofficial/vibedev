@@ -71,6 +71,7 @@ def prompt(
     cfg = get_config()
     ws = ensure_workspace(workspace if workspace is not None else cfg["workspace_root"])
     log_path = _prepare_log_path(ws)
+    conversation_log_path = _conversation_log_path(log_path)
 
     if not quiet:
         print(f"[vibedev] workspace: {ws}", file=sys.stderr, flush=True)
@@ -85,8 +86,13 @@ def prompt(
             team_label = "(none — single orchestrator)"
         print(f"[vibedev] team: {team_label}", file=sys.stderr, flush=True)
         print(f"[vibedev] transcript: {log_path}", file=sys.stderr, flush=True)
+        print(
+            f"[vibedev] conversation: {conversation_log_path}",
+            file=sys.stderr,
+            flush=True,
+        )
 
-    anyio.run(_run, user_prompt, ws, cfg, quiet, log_path)
+    anyio.run(_run, user_prompt, ws, cfg, quiet, log_path, conversation_log_path)
     return ws
 
 
@@ -110,23 +116,47 @@ def _prepare_log_path(workspace: Path) -> Path:
     return log_dir / f"{ts}.log"
 
 
+def _conversation_log_path(transcript_log_path: Path) -> Path:
+    return transcript_log_path.with_suffix(".conversation.md")
+
+
 async def _run(
     user_prompt: str,
     workspace: Path,
     cfg: Config,
     quiet: bool,
     log_path: Path,
+    conversation_log_path: Path,
 ) -> None:
-    with _TranscriptLogger(log_path) as logger:
+    with _TranscriptLogger(log_path) as logger, _ConversationLogger(
+        conversation_log_path
+    ) as conversation_logger:
         logger.write_header(user_prompt, workspace, cfg)
+        conversation_logger.write_header(user_prompt, workspace, cfg, log_path)
         try:
             if _supports_coded_team_workflow(cfg["team"]):
-                await _run_coded_team_workflow(user_prompt, workspace, cfg, quiet, logger)
+                await _run_coded_team_workflow(
+                    user_prompt,
+                    workspace,
+                    cfg,
+                    quiet,
+                    logger,
+                    conversation_logger,
+                )
             else:
                 options = _options_for_orchestrator(workspace, cfg)
-                await _run_query(user_prompt, options, logger, quiet)
+                label = "Fallback Manager" if cfg["team"] else "Solo Orchestrator"
+                await _run_conversation_turn(
+                    label,
+                    user_prompt,
+                    options,
+                    logger,
+                    conversation_logger,
+                    quiet,
+                )
         finally:
             logger.write_footer()
+            conversation_logger.write_footer()
 
 
 def _options_for_orchestrator(workspace: Path, cfg: Config) -> ClaudeAgentOptions:
@@ -167,6 +197,7 @@ async def _run_coded_team_workflow(
     cfg: Config,
     quiet: bool,
     logger: "_TranscriptLogger",
+    conversation_logger: "_ConversationLogger",
 ) -> None:
     developer_model = _first_role_model(cfg["team"], "developer", cfg["model"])
     tester_model = _first_role_model(cfg["team"], "tester", cfg["model"])
@@ -176,14 +207,20 @@ async def _run_coded_team_workflow(
 
     plan = _load_or_create_team_plan(workspace, user_prompt)
     common_knowledge = _write_common_knowledge(workspace, user_prompt, plan)
+    knowledge_curator_prompt = _build_knowledge_curator_prompt(
+        user_prompt,
+        plan,
+        common_knowledge,
+    )
     knowledge_curator_report = await _run_ad_hoc_agent(
         workspace,
         cfg,
         role_name="knowledge curator",
         model=cfg["model"],
         system_prompt=KNOWLEDGE_CURATOR_PROMPT,
-        prompt=_build_knowledge_curator_prompt(user_prompt, plan, common_knowledge),
+        prompt=knowledge_curator_prompt,
         logger=logger,
+        conversation_logger=conversation_logger,
         quiet=quiet,
     )
     common_knowledge = _write_common_knowledge(
@@ -202,10 +239,17 @@ async def _run_coded_team_workflow(
             system_prompt=BUSINESS_ANALYST_PROMPT,
         )
         _announce_stage("business analyst plan review", logger, quiet)
-        analyst_brief = await _run_query(
-            _build_business_analyst_prompt(user_prompt, plan, common_knowledge),
+        analyst_prompt = _build_business_analyst_prompt(
+            user_prompt,
+            plan,
+            common_knowledge,
+        )
+        analyst_brief = await _run_conversation_turn(
+            "Business Analyst Plan Review",
+            analyst_prompt,
             analyst_options,
             logger,
+            conversation_logger,
             quiet,
         )
         analyst_added_task_indices = _apply_analyst_review(workspace, plan, analyst_brief)
@@ -247,31 +291,37 @@ async def _run_coded_team_workflow(
     for attempt in range(1, MAX_TEAM_FIX_ATTEMPTS + 1):
         label = f"developer attempt {attempt}: {task}"
         _announce_stage(label, logger, quiet)
-        developer_report = await _run_query(
-            _build_developer_prompt(
-                task,
-                attempt,
-                tester_report,
-                analyst_brief,
-                common_knowledge,
-            ),
+        developer_prompt = _build_developer_prompt(
+            task,
+            attempt,
+            tester_report,
+            analyst_brief,
+            common_knowledge,
+        )
+        developer_report = await _run_conversation_turn(
+            f"Developer Attempt {attempt}",
+            developer_prompt,
             developer_options,
             logger,
+            conversation_logger,
             quiet,
         )
 
         label = f"tester attempt {attempt}: {task}"
         _announce_stage(label, logger, quiet)
-        tester_report = await _run_query(
-            _build_tester_prompt(
-                task,
-                attempt,
-                developer_report,
-                analyst_brief,
-                common_knowledge,
-            ),
+        tester_prompt = _build_tester_prompt(
+            task,
+            attempt,
+            developer_report,
+            analyst_brief,
+            common_knowledge,
+        )
+        tester_report = await _run_conversation_turn(
+            f"Tester Attempt {attempt}",
+            tester_prompt,
             tester_options,
             logger,
+            conversation_logger,
             quiet,
         )
 
@@ -281,15 +331,18 @@ async def _run_coded_team_workflow(
             _mark_plan_tasks_done(workspace, plan, analyst_added_task_indices)
             plan_text_after_checkoff = _read_plan_text(workspace)
             _announce_stage("update README after passed team run", logger, quiet)
-            await _run_query(
-                _build_readme_update_prompt(
-                    task,
-                    developer_report,
-                    tester_report,
-                    common_knowledge,
-                ),
+            readme_prompt = _build_readme_update_prompt(
+                task,
+                developer_report,
+                tester_report,
+                common_knowledge,
+            )
+            await _run_conversation_turn(
+                "README Updater",
+                readme_prompt,
                 readme_options,
                 logger,
+                conversation_logger,
                 quiet,
             )
             _restore_plan_if_changed(workspace, plan_text_after_checkoff)
@@ -330,6 +383,19 @@ async def _run_query(
         if not quiet:
             _print_message(message)
     return "\n".join(text_parts).strip()
+
+
+async def _run_conversation_turn(
+    label: str,
+    prompt_text: str,
+    options: ClaudeAgentOptions,
+    logger: "_TranscriptLogger",
+    conversation_logger: "_ConversationLogger",
+    quiet: bool,
+) -> str:
+    response_text = await _run_query(prompt_text, options, logger, quiet)
+    conversation_logger.log_turn(label, prompt_text, response_text)
+    return response_text
 
 
 def _supports_coded_team_workflow(team: list[tuple[str, str | None]]) -> bool:
@@ -386,6 +452,7 @@ async def _run_ad_hoc_agent(
     system_prompt: str,
     prompt: str,
     logger: "_TranscriptLogger",
+    conversation_logger: "_ConversationLogger",
     quiet: bool,
 ) -> str:
     _announce_stage(f"ad hoc {role_name} review", logger, quiet)
@@ -395,7 +462,14 @@ async def _run_ad_hoc_agent(
         model=model,
         system_prompt=system_prompt,
     )
-    return await _run_query(prompt, options, logger, quiet)
+    return await _run_conversation_turn(
+        f"Ad Hoc {role_name.title()}",
+        prompt,
+        options,
+        logger,
+        conversation_logger,
+        quiet,
+    )
 
 
 def _build_knowledge_curator_prompt(
@@ -1145,6 +1219,71 @@ class _TranscriptLogger:
         self._fh.write(f"  {header}\n")
         for line in body.splitlines() or [""]:
             self._fh.write(f"    {line}\n")
+
+
+class _ConversationLogger:
+    """Writes a lightweight role-to-role conversation log.
+
+    Unlike :class:`_TranscriptLogger`, this intentionally skips thinking
+    blocks, tool calls, file reads, and bash output. It records only the prompt
+    Python sent to a stage and the final text response returned by that stage.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._fh: IO[str] = path.open("w", encoding="utf-8")
+
+    def __enter__(self) -> "_ConversationLogger":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._fh.close()
+
+    def write_header(
+        self,
+        user_prompt: str,
+        workspace: Path,
+        cfg: Config,
+        transcript_log_path: Path,
+    ) -> None:
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        fh = self._fh
+        fh.write("# vibedev Conversation Log\n\n")
+        fh.write(f"- Started: `{ts}`\n")
+        fh.write(f"- Workspace: `{workspace}`\n")
+        fh.write(f"- Model: `{cfg['model']}`\n")
+        fh.write(f"- Permissions: `{cfg['permission_mode']}`\n")
+        if cfg["team"]:
+            parts = [f"{role}({model or cfg['model']})" for role, model in cfg["team"]]
+            fh.write(f"- Team: `{', '.join(parts)}`\n")
+        else:
+            fh.write("- Team: `(none - single orchestrator)`\n")
+        fh.write(f"- Full transcript: `{transcript_log_path}`\n\n")
+        fh.write("## User Prompt\n\n")
+        self._write_fenced(user_prompt)
+        fh.flush()
+
+    def write_footer(self) -> None:
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        self._fh.write(f"\n## Run Ended\n\n`{ts}`\n")
+        self._fh.flush()
+
+    def log_turn(self, label: str, prompt: str, response: str) -> None:
+        self._fh.write(f"\n## {_markdown_heading_text(label)}\n\n")
+        self._fh.write("### Prompt\n\n")
+        self._write_fenced(prompt)
+        self._fh.write("\n### Response\n\n")
+        self._write_fenced(response or "(no text response)")
+        self._fh.flush()
+
+    def _write_fenced(self, text: str) -> None:
+        self._fh.write("````text\n")
+        self._fh.write(text.rstrip())
+        self._fh.write("\n````\n")
+
+
+def _markdown_heading_text(text: str) -> str:
+    return _one_line(text).replace("#", "").strip() or "Agent Turn"
 
 
 def _render_tool_result(result: Any) -> str:

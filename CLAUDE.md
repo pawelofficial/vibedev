@@ -183,8 +183,8 @@ The package is intentionally small — six modules under `src/vibedev/`:
   internal ad hoc stage at the start of coded team deploys.
 - **`core.py`** — `prompt(...)` is the public entry point. It validates the
   user prompt, snapshots config via `get_config()`, resolves the workspace via
-  `ensure_workspace(...)`, prepares a transcript log path via
-  `_prepare_log_path(...)`, prints a header to stderr (unless `quiet`), and
+  `ensure_workspace(...)`, prepares full transcript and conversation log paths,
+  prints a header to stderr (unless `quiet`), and
   uses `anyio.run` to drive the async `_run`. `_run` branches on team shape:
   developer+tester teams use the coded lifecycle in
   `_run_coded_team_workflow`; solo mode uses `ORCHESTRATOR_SYSTEM_PROMPT`;
@@ -194,16 +194,17 @@ The package is intentionally small — six modules under `src/vibedev/`:
   blocker recording, and the dev/test retry policy. Every
   `claude_agent_sdk.query(...)` message is fanned out to (a) a
   `_TranscriptLogger` writing to `<workspace>.vibedev-logs/<UTC>.log` (a
-  **sibling** of the workspace, deliberately outside it — see "Transcript
-  logging" below) and (b) `_print_message` for live stdout (skipped when
-  `quiet=True`).
+  **sibling** of the workspace, deliberately outside it — see "Transcript and
+  conversation logging" below) and (b) `_print_message` for live stdout
+  (skipped when `quiet=True`). Coded workflow stage prompts/responses are also
+  recorded by `_ConversationLogger` in `<UTC>.conversation.md`.
   `_print_message` is deliberately loose-typed (`getattr`-based) so SDK
   message-shape changes don't break us; it intentionally **skips
   `total_cost_usd`** because that figure reports API pricing equivalents
   and is misleading for users on a Claude.ai subscription. The
   `_TranscriptLogger` mirrors the same loose-typed pattern and captures
   full block content (text, thinking, tool_use input as JSON, tool_result
-  body with `tool_use_id`) — see "Transcript logging" below.
+  body with `tool_use_id`) — see "Transcript and conversation logging" below.
 - **`cli.py`** — argparse wrapper that maps `--model` / `--permissions` /
   `--workspace-root` flags onto the same `set_*` functions before calling
   `core.prompt`. Registered as the `vibedev` console script via
@@ -295,13 +296,17 @@ behavior in `prompts.py`.
 A killed-mid-task run leaves the workspace partially mutated; the
 reconciliation step on the next run is best-effort, not transactional.
 
-### Transcript logging
+### Transcript and conversation logging
 
-Every `vibedev.prompt(...)` call writes a per-run transcript at
-`<workspace>.vibedev-logs/<UTC-ISO-timestamp>.log` — a **sibling** directory
-next to the workspace, deliberately not inside it. The file is created at
-the top of `prompt()` (before the async work starts) so the stderr header
-can announce its path and the user can `tail -f` it during a run.
+Every `vibedev.prompt(...)` call writes two per-run logs in the sibling
+`<workspace>.vibedev-logs/` directory, deliberately not inside the workspace:
+
+- `<UTC-ISO-timestamp>.log` — the full forensic transcript.
+- `<UTC-ISO-timestamp>.conversation.md` — the lightweight role conversation log.
+
+Both paths are created at the top of `prompt()` (before the async work starts)
+so the stderr header can announce them and the user can inspect either file
+during a run.
 
 **The log lives outside the workspace on purpose.** The agent's `cwd` is
 the workspace, so if logs lived under `<workspace>/.vibedev/runs/` the
@@ -310,8 +315,8 @@ let one run's transcript leak into the next run's context (noisy, token-
 expensive, and competes with the dedicated resumption signal in
 `.vibedev/plan.md`). Moving logs to a sibling directory removes them from
 the agent's view entirely — the user is the only consumer. The plan file
-stays *inside* the workspace because the agent legitimately needs it; the
-transcript log is the inverse.
+stays *inside* the workspace because the agent legitimately needs it; logs are
+the inverse.
 
 The logger lives in `core.py` (`_TranscriptLogger`). It is intentionally
 loose-typed via `getattr` so SDK message-shape changes don't break it —
@@ -323,12 +328,18 @@ runs vibedev overnight, they should be able to read the log the next day
 and understand exactly what files were edited, what bash commands ran,
 and what came back.
 
+The conversation logger also lives in `core.py` (`_ConversationLogger`). It
+records only the user prompt plus each coded workflow stage's prompt and final
+text response. It intentionally omits thinking, tool calls, file reads, and
+bash output so users can read the agent-to-agent handoff without wading through
+large tool results.
+
 **Always on, not configurable.** There is no `set_logging(False)` or
 `log=False` kwarg — the public API stays small (see "Public API" above)
 and the cost of an unwanted log file is trivially small (a few KB to a
 few MB of text, sitting in a sibling directory). `quiet=True` only
-silences stdout; the file log still gets written, because the two
-concerns are orthogonal.
+silences stdout; both file logs still get written, because the concerns are
+orthogonal.
 
 **Never truncated.** Tool results (bash output, file reads) are written
 in full. Truncation hides exactly the information you need when something

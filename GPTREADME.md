@@ -69,8 +69,9 @@ that do not include both `developer` and `tester`.
 
 ## Important Files
 
-- `src/vibedev/core.py` - public `prompt(...)`, SDK query driving, transcript
-  logging, and the coded developer/tester workflow.
+- `src/vibedev/core.py` - public `prompt(...)`, SDK query driving, full
+  transcript logging, lightweight conversation logging, and the coded
+  developer/tester workflow.
 - `src/vibedev/roles.py` - business analyst/developer/tester role prompts plus
   fallback manager helpers.
 - `src/vibedev/prompts.py` - solo orchestrator prompt.
@@ -119,6 +120,8 @@ runs require the Claude Code CLI installed and authenticated.
 - Transcript logs live in a sibling directory
   `<workspace>.vibedev-logs/` so generated agents do not read prior logs as
   ordinary workspace context.
+- Each run also writes `<UTC>.conversation.md` beside the full transcript. It
+  contains only stage prompts and final responses, not tool reads or bash output.
 
 ## Things To Be Careful About
 

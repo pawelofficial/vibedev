@@ -31,15 +31,24 @@ object.
 1. Validates the prompt.
 2. Snapshots config from `config.py`.
 3. Resolves/creates the workspace via `workspace.py`.
-4. Creates a sibling transcript log path.
+4. Creates sibling transcript and conversation log paths.
 5. Enters `_run(...)` in `core.py`.
 6. Chooses solo mode, coded team mode, or fallback manager mode.
-7. Streams every SDK message to stdout and the transcript log.
+7. Streams every SDK message to stdout and the transcript log; records each
+   stage prompt/response pair to the conversation log.
 8. Returns the workspace path when complete.
 
-Transcript logs are written to `<workspace>.vibedev-logs/`, not inside the
-workspace. This prevents generated agents from reading prior transcripts as
-ordinary project files.
+Logs are written to `<workspace>.vibedev-logs/`, not inside the workspace. This
+prevents generated agents from reading prior transcripts as ordinary project
+files.
+
+Each run writes two files:
+
+- `<UTC>.log` is the full forensic transcript with SDK messages, thinking,
+  tool calls, file reads, and bash output.
+- `<UTC>.conversation.md` is the lightweight agent handoff log. It records the
+  user prompt plus each coded workflow stage's prompt and final response, but
+  omits tool reads and command output.
 
 ## Solo Mode
 
