@@ -68,11 +68,13 @@ the workspace, so the caller can open / inspect the generated code afterwards.
 (currently `"business_analyst"`, `"developer"`, and `"tester"`). When developer
 and tester are configured, Python owns the lifecycle: read/create
 `.vibedev/plan.md`, append the current request as a pending task when needed,
-optionally run the business analyst against the current plan, append analyst-
-proposed tasks, pick the next `[ ]` task, run developer, run tester, parse the
-tester’s `VIBEDEV_VERDICT`, send failures back to the developer, and mark `[x]`
-only after tester pass. This is deliberately code-owned control flow rather
-than a manager-prompt convention.
+write `.vibedev/common_knowledge.md` as shared role context, pass agents a
+pointer to that file, optionally run the business analyst against the current
+plan, append analyst-proposed tasks, pick the next `[ ]` task, run developer,
+run tester, parse the tester’s
+`VIBEDEV_VERDICT`, send failures back to the developer, and mark `[x]` only
+after tester pass. This is deliberately code-owned control flow rather than a
+manager-prompt convention.
 
 The SDK-native manager prompt still exists as a fallback for unusual teams
 that do not include both `"developer"` and `"tester"`. The `"manager"` role
@@ -182,10 +184,10 @@ The package is intentionally small — six modules under `src/vibedev/`:
   developer+tester teams use the coded lifecycle in
   `_run_coded_team_workflow`; solo mode uses `ORCHESTRATOR_SYSTEM_PROMPT`;
   other team shapes use the fallback SDK-native manager prompt.
-  `_run_coded_team_workflow` owns plan creation/parsing/writing, optional
-  analyst review, task selection, checkoff, blocker recording, and the dev/test
-  retry policy. Every `claude_agent_sdk.query(...)` message is fanned out to (a)
-  a
+  `_run_coded_team_workflow` owns plan creation/parsing/writing, common
+  knowledge generation, optional analyst review, task selection, checkoff,
+  blocker recording, and the dev/test retry policy. Every
+  `claude_agent_sdk.query(...)` message is fanned out to (a) a
   `_TranscriptLogger` writing to `<workspace>.vibedev-logs/<UTC>.log` (a
   **sibling** of the workspace, deliberately outside it — see "Transcript
   logging" below) and (b) `_print_message` for live stdout (skipped when
@@ -223,9 +225,10 @@ The package is intentionally small — six modules under `src/vibedev/`:
 ### Multi-agent layering: coded lifecycle, SDK execution
 
 vibedev owns the high-level team lifecycle in Python when both `developer`
-and `tester` are configured. It reads/writes `.vibedev/plan.md`, optionally
-runs `business_analyst` to challenge the plan and propose tasks, selects the
-next pending task, runs the developer agent, runs the tester agent, parses the
+and `tester` are configured. It reads/writes `.vibedev/plan.md`, writes
+`.vibedev/common_knowledge.md` for shared project context, optionally runs
+`business_analyst` to challenge the plan and propose tasks, selects the next
+pending task, runs the developer agent, runs the tester agent, parses the
 tester’s `VIBEDEV_VERDICT`, sends failures back to the developer, marks the
 task complete only after tester pass, and records blockers on repeated failure.
 The SDK still does the heavy agent execution for each role via `query(...)`;
@@ -258,9 +261,14 @@ The contract:
   as a new pending task if it is not already listed, and resumes from the top
   `[ ]`.
 - **Business analyst review**: if configured, Python passes the user request
-  and current plan to the analyst, parses only `## Proposed Tasks` for plan
-  additions, and passes the full analyst brief into developer/tester prompts as
-  acceptance context.
+  current plan, and the common knowledge path/purpose to the analyst, parses only
+  `## Proposed Tasks` for plan additions, and passes the full analyst brief
+  into developer/tester prompts as acceptance context.
+- **Common knowledge**: Python writes `.vibedev/common_knowledge.md` with the
+  project goal, current request, plan summary, docs, tests, notable files, and
+  workflow rules. Its path and purpose are injected into
+  analyst/developer/tester/README-updater prompts; the full contents are not
+  injected, so agents can read the file only when useful.
 - **Team checkoff**: Python flips a task to `[x]` only after the tester returns
   `VIBEDEV_VERDICT: PASS`; repeated failures leave the task `[ ]` and append a
   blocker to `## History`.
