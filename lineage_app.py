@@ -34,7 +34,7 @@ vibedev.set_team(
 
 # --- run ---------------------------------------------------------------------
 
-USER_PROMPT = """
+STARTUP_PROMPT = """
 Build a column-lineage web app for the SQL models in schema.txt.
 
 The file schema.txt is already present in the current workspace. Read it and
@@ -75,6 +75,21 @@ Implementation guidance:
   - stg_line_items_priced.estimated_line_margin
 - Update README.md with setup, run, and test instructions.
 """
+
+FEATURE_PROMPT = """
+Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
+Implement this UI feature:
+Users should be able to drag and reposition the boxes/nodes that represent SQL
+tables and views in the lineage graph. Currently those nodes are fixed in place.
+Requirements:
+- Preserve the existing app structure and lineage parsing behavior.
+- Make table/view nodes draggable with mouse or pointer interactions.
+- Keep lineage edges connected to nodes after they move.
+- The moved positions should remain stable during the current browser session.
+- Add or update tests where practical for the graph/node positioning behavior.
+- Update README.md if the UI behavior or usage instructions change.
+"""
+USER_PROMPT=FEATURE_PROMPT
 
 workspace = vibedev.prompt(
     USER_PROMPT,
