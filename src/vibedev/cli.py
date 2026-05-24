@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("prompt", help="What to build, e.g. 'a calculator web app'.")
     parser.add_argument(
         "--workspace",
-        help="Workspace directory (default: ./vibedev-output/<timestamp>).",
+        help="Workspace directory for this run (overrides --workspace-root).",
     )
     parser.add_argument("--model", help="Claude model ID to use.")
     parser.add_argument(
@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--workspace-root",
-        help="Root under which timestamped workspaces are created.",
+        help="Workspace root directory (default: ./vibedev-output, used directly).",
     )
     parser.add_argument("--quiet", action="store_true")
 

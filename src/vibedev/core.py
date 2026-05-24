@@ -11,7 +11,7 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 
 from vibedev.config import Config, get_config
 from vibedev.prompts import ORCHESTRATOR_SYSTEM_PROMPT
-from vibedev.workspace import create_workspace
+from vibedev.workspace import ensure_workspace
 
 
 def prompt(
@@ -29,12 +29,7 @@ def prompt(
         raise ValueError("user_prompt must be a non-empty string")
 
     cfg = get_config()
-    ws = (
-        Path(workspace).expanduser().resolve()
-        if workspace is not None
-        else create_workspace(cfg["workspace_root"])
-    )
-    ws.mkdir(parents=True, exist_ok=True)
+    ws = ensure_workspace(workspace if workspace is not None else cfg["workspace_root"])
 
     if not quiet:
         print(f"[vibedev] workspace: {ws}", file=sys.stderr, flush=True)

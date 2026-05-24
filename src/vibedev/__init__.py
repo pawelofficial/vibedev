@@ -5,8 +5,8 @@ Typical use:
     import vibedev
     vibedev.prompt("build a calculator web app")
 
-By default the agent works inside ``./vibedev-output/<timestamp>/`` with
-``bypassPermissions`` mode. Override with the ``set_*`` configurators.
+By default the agent works inside ``./vibedev-output/`` (created if missing)
+with ``bypassPermissions`` mode. Override with the ``set_*`` configurators.
 """
 
 from vibedev.config import (

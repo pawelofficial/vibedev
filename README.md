@@ -8,8 +8,9 @@ vibedev.prompt("build a calculator web app")
 ```
 
 vibedev spins up Claude as an autonomous developer agent inside an isolated
-workspace directory. By default, output lands in `./vibedev-output/<timestamp>/`
-so a run can never clobber your existing files.
+workspace directory. By default, output lands in `./vibedev-output/` (created
+if missing). Set `set_workspace_root(...)` or pass `workspace=` per call to
+direct different projects to different folders.
 
 ## Install
 

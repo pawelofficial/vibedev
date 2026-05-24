@@ -6,7 +6,7 @@ import pytest
 
 import vibedev
 from vibedev.config import get_config, set_model, set_permissions, set_workspace_root
-from vibedev.workspace import create_workspace
+from vibedev.workspace import ensure_workspace
 
 
 def test_public_api_exports():
@@ -48,18 +48,25 @@ def test_get_config_returns_copy():
     assert get_config()["model"] != "tampered"
 
 
-def test_workspace_creates_timestamped_dir(tmp_path):
-    ws = create_workspace(tmp_path)
-    assert ws.exists()
+def test_ensure_workspace_creates_missing_dir(tmp_path):
+    target = tmp_path / "new-project"
+    ws = ensure_workspace(target)
+    assert ws == target.resolve()
     assert ws.is_dir()
-    assert ws.parent == tmp_path
 
 
-def test_workspace_collision_suffix(tmp_path):
-    a = create_workspace(tmp_path)
-    b = create_workspace(tmp_path)
-    assert a != b
-    assert a.exists() and b.exists()
+def test_ensure_workspace_is_idempotent(tmp_path):
+    target = tmp_path / "reused"
+    a = ensure_workspace(target)
+    b = ensure_workspace(target)
+    assert a == b
+    assert a.is_dir()
+
+
+def test_ensure_workspace_creates_parents(tmp_path):
+    target = tmp_path / "a" / "b" / "c"
+    ws = ensure_workspace(target)
+    assert ws.is_dir()
 
 
 def test_set_workspace_root_roundtrip():
