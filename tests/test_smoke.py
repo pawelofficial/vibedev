@@ -5,6 +5,14 @@ from __future__ import annotations
 import pytest
 
 import vibedev
+from vibedev.core import (
+    _build_developer_prompt,
+    _build_finalizer_prompt,
+    _build_tester_prompt,
+    _extract_verdict,
+    _first_role_model,
+    _supports_coded_team_workflow,
+)
 from vibedev.config import (
     get_config,
     set_model,
@@ -201,14 +209,69 @@ def test_get_config_team_is_copy():
         set_team(original)
 
 
-def test_manager_prompt_requires_verify_fix_retest_loop():
+def test_fallback_manager_prompt_requires_verify_fix_retest_loop():
     prompt = build_manager_prompt(
         [("developer", None), ("tester", None)],
         default_model="claude-opus-4-7",
     )
 
-    assert "Do not mark the plan item `[x]` yet." in prompt
+    assert "Do not mark the plan item `[x]`\n   yet." in prompt
     assert "Only mark the item `[x]` after the tester reports" in prompt
-    assert "After every developer fix, send the changed artifact back to the tester." in prompt
-    assert "Do not signal completion with known failing tests." in prompt
+    assert "After every developer fix,\n   send the changed artifact back to the tester." in prompt
+    assert "Do not\n   signal completion with known failing tests." in prompt
     assert "Wait for the result, mark the item" not in prompt
+
+
+def test_coded_team_workflow_requires_developer_and_tester():
+    assert _supports_coded_team_workflow([("developer", None), ("tester", None)])
+    assert _supports_coded_team_workflow(
+        [("developer", "haiku"), ("developer", "haiku"), ("tester", "sonnet")]
+    )
+    assert not _supports_coded_team_workflow([])
+    assert not _supports_coded_team_workflow([("developer", None)])
+    assert not _supports_coded_team_workflow([("tester", None)])
+
+
+def test_first_role_model_uses_first_matching_role_and_default():
+    team = [("developer", None), ("developer", "haiku"), ("tester", "sonnet")]
+
+    assert _first_role_model(team, "developer", "opus") == "opus"
+    assert _first_role_model(team, "tester", "opus") == "sonnet"
+    assert _first_role_model(team, "designer", "opus") is None
+
+
+def test_extract_verdict_uses_last_explicit_verdict():
+    assert _extract_verdict("looks good\nVIBEDEV_VERDICT: PASS") is True
+    assert _extract_verdict("broken\nVIBEDEV_VERDICT: FAIL") is False
+    assert _extract_verdict("VIBEDEV_VERDICT: FAIL\nfixed\nVIBEDEV_VERDICT: PASS") is True
+    assert _extract_verdict("tests passed") is None
+
+
+def test_tester_prompt_requires_machine_readable_verdict():
+    prompt = _build_tester_prompt(
+        "add /goodbye",
+        attempt=1,
+        developer_report="changed app.py",
+    )
+
+    assert "End your response with exactly one verdict line:" in prompt
+    assert "VIBEDEV_VERDICT: PASS" in prompt
+    assert "VIBEDEV_VERDICT: FAIL" in prompt
+
+
+def test_coded_workflow_prompts_keep_plan_checkoff_in_finalizer():
+    developer_prompt = _build_developer_prompt(
+        "add /goodbye",
+        attempt=1,
+        tester_report="",
+    )
+    finalizer_prompt = _build_finalizer_prompt(
+        "add /goodbye",
+        developer_report="changed app.py",
+        tester_report="VIBEDEV_VERDICT: PASS",
+        passed=True,
+    )
+
+    assert "Do not mark the changed scope complete yet" in developer_prompt
+    assert "status: passed" in finalizer_prompt
+    assert "Update `.vibedev/plan.md` and `README.md`" in finalizer_prompt

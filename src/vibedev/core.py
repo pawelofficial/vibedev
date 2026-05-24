@@ -13,8 +13,30 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 
 from vibedev.config import Config, get_config
 from vibedev.prompts import ORCHESTRATOR_SYSTEM_PROMPT
-from vibedev.roles import build_manager_prompt, subagents_for
+from vibedev.roles import (
+    DEVELOPER_PROMPT,
+    TESTER_PROMPT,
+    build_manager_prompt,
+    subagents_for,
+)
 from vibedev.workspace import ensure_workspace
+
+MAX_TEAM_FIX_ATTEMPTS = 3
+
+TEAM_FINALIZER_SYSTEM_PROMPT = """You are the finalizer for a vibedev team run.
+
+Python code outside the model has already coordinated developer and tester
+agents. Your job is limited to project bookkeeping after that workflow:
+
+- If the tester passed, update `.vibedev/plan.md` so completed work is checked
+  off, append a concise `## History` entry for this run, and update `README.md`
+  with how to run or test the project.
+- If the tester did not pass, do not mark the related task complete. Record a
+  clear blocker in `.vibedev/plan.md` with the failing command/error so the
+  next run can resume.
+
+Do not implement feature code in this finalizer step.
+"""
 
 
 def prompt(
@@ -80,30 +102,277 @@ async def _run(
     quiet: bool,
     log_path: Path,
 ) -> None:
+    with _TranscriptLogger(log_path) as logger:
+        logger.write_header(user_prompt, workspace, cfg)
+        try:
+            if _supports_coded_team_workflow(cfg["team"]):
+                await _run_coded_team_workflow(user_prompt, workspace, cfg, quiet, logger)
+            else:
+                options = _options_for_orchestrator(workspace, cfg)
+                await _run_query(user_prompt, options, logger, quiet)
+        finally:
+            logger.write_footer()
+
+
+def _options_for_orchestrator(workspace: Path, cfg: Config) -> ClaudeAgentOptions:
     if cfg["team"]:
-        options = ClaudeAgentOptions(
+        return ClaudeAgentOptions(
             cwd=str(workspace),
             permission_mode=cfg["permission_mode"],
             model=cfg["model"],
             system_prompt=build_manager_prompt(cfg["team"], cfg["model"]),
             agents=subagents_for(cfg["team"], cfg["model"]),
         )
-    else:
-        options = ClaudeAgentOptions(
-            cwd=str(workspace),
-            permission_mode=cfg["permission_mode"],
-            model=cfg["model"],
-            system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+    return ClaudeAgentOptions(
+        cwd=str(workspace),
+        permission_mode=cfg["permission_mode"],
+        model=cfg["model"],
+        system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+    )
+
+
+def _options_for_role(
+    workspace: Path,
+    cfg: Config,
+    *,
+    model: str,
+    system_prompt: str,
+) -> ClaudeAgentOptions:
+    return ClaudeAgentOptions(
+        cwd=str(workspace),
+        permission_mode=cfg["permission_mode"],
+        model=model,
+        system_prompt=system_prompt,
+    )
+
+
+async def _run_coded_team_workflow(
+    user_prompt: str,
+    workspace: Path,
+    cfg: Config,
+    quiet: bool,
+    logger: "_TranscriptLogger",
+) -> None:
+    developer_model = _first_role_model(cfg["team"], "developer", cfg["model"])
+    tester_model = _first_role_model(cfg["team"], "tester", cfg["model"])
+    assert developer_model is not None
+    assert tester_model is not None
+
+    developer_options = _options_for_role(
+        workspace,
+        cfg,
+        model=developer_model,
+        system_prompt=DEVELOPER_PROMPT,
+    )
+    tester_options = _options_for_role(
+        workspace,
+        cfg,
+        model=tester_model,
+        system_prompt=TESTER_PROMPT,
+    )
+    finalizer_options = _options_for_role(
+        workspace,
+        cfg,
+        model=cfg["model"],
+        system_prompt=TEAM_FINALIZER_SYSTEM_PROMPT,
+    )
+
+    tester_report = ""
+    developer_report = ""
+    for attempt in range(1, MAX_TEAM_FIX_ATTEMPTS + 1):
+        label = f"developer attempt {attempt}"
+        _announce_stage(label, logger, quiet)
+        developer_report = await _run_query(
+            _build_developer_prompt(user_prompt, attempt, tester_report),
+            developer_options,
+            logger,
+            quiet,
         )
-    with _TranscriptLogger(log_path) as logger:
-        logger.write_header(user_prompt, workspace, cfg)
-        try:
-            async for message in query(prompt=user_prompt, options=options):
-                logger.log_message(message)
-                if not quiet:
-                    _print_message(message)
-        finally:
-            logger.write_footer()
+
+        label = f"tester attempt {attempt}"
+        _announce_stage(label, logger, quiet)
+        tester_report = await _run_query(
+            _build_tester_prompt(user_prompt, attempt, developer_report),
+            tester_options,
+            logger,
+            quiet,
+        )
+
+        verdict = _extract_verdict(tester_report)
+        if verdict is True:
+            _announce_stage("finalize passed team run", logger, quiet)
+            await _run_query(
+                _build_finalizer_prompt(
+                    user_prompt,
+                    developer_report,
+                    tester_report,
+                    passed=True,
+                ),
+                finalizer_options,
+                logger,
+                quiet,
+            )
+            return
+
+        if verdict is None:
+            tester_report = (
+                "Tester did not provide `VIBEDEV_VERDICT: PASS`; treat this "
+                "as a failed or inconclusive verification.\n\n"
+                f"{tester_report}"
+            )
+
+    _announce_stage("record unresolved team blocker", logger, quiet)
+    await _run_query(
+        _build_finalizer_prompt(
+            user_prompt,
+            developer_report,
+            tester_report,
+            passed=False,
+        ),
+        finalizer_options,
+        logger,
+        quiet,
+    )
+    raise RuntimeError(
+        "vibedev team workflow stopped with failing or inconclusive tests "
+        f"after {MAX_TEAM_FIX_ATTEMPTS} attempt(s)"
+    )
+
+
+async def _run_query(
+    prompt_text: str,
+    options: ClaudeAgentOptions,
+    logger: "_TranscriptLogger",
+    quiet: bool,
+) -> str:
+    text_parts: list[str] = []
+    async for message in query(prompt=prompt_text, options=options):
+        logger.log_message(message)
+        text = _message_text(message)
+        if text:
+            text_parts.append(text)
+        if not quiet:
+            _print_message(message)
+    return "\n".join(text_parts).strip()
+
+
+def _supports_coded_team_workflow(team: list[tuple[str, str | None]]) -> bool:
+    roles = {role for role, _model in team}
+    return "developer" in roles and "tester" in roles
+
+
+def _first_role_model(
+    team: list[tuple[str, str | None]],
+    role_name: str,
+    default_model: str,
+) -> str | None:
+    for role, model in team:
+        if role == role_name:
+            return model or default_model
+    return None
+
+
+def _extract_verdict(text: str) -> bool | None:
+    verdict: bool | None = None
+    for line in text.splitlines():
+        normalized = line.strip().upper()
+        if normalized == "VIBEDEV_VERDICT: PASS":
+            verdict = True
+        elif normalized == "VIBEDEV_VERDICT: FAIL":
+            verdict = False
+    return verdict
+
+
+def _message_text(message: Any) -> str:
+    content = getattr(message, "content", None)
+    if not content:
+        return ""
+    parts = []
+    for block in content:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(str(text))
+    return "\n".join(parts)
+
+
+def _announce_stage(label: str, logger: "_TranscriptLogger", quiet: bool) -> None:
+    logger.write_stage(label)
+    if not quiet:
+        print(f"[vibedev] {label}", file=sys.stderr, flush=True)
+
+
+def _build_developer_prompt(user_prompt: str, attempt: int, tester_report: str) -> str:
+    if attempt == 1:
+        return f"""User request:
+{user_prompt}
+
+Implement the requested change inside the current workspace.
+
+Before editing, read `.vibedev/plan.md` if it exists and reconcile it with the
+current files. If new work is needed, make sure the plan contains pending
+items for it. Do not mark the changed scope complete yet; Python will send
+your work to the tester first.
+
+When you finish, report the files changed, commands run, and what the tester
+should verify.
+"""
+
+    return f"""User request:
+{user_prompt}
+
+The tester found failures in the previous attempt. Fix the implementation
+without weakening the requested behavior or deleting useful tests.
+
+Tester report:
+{tester_report}
+
+After the fix, report the files changed, commands run, and what the tester
+should re-run.
+"""
+
+
+def _build_tester_prompt(user_prompt: str, attempt: int, developer_report: str) -> str:
+    return f"""User request:
+{user_prompt}
+
+Developer attempt: {attempt}
+
+Developer report:
+{developer_report}
+
+Verify the changed scope. Write or update focused tests when useful, run the
+relevant checks, and report exact failures with the failing command and
+smallest reproducer.
+
+End your response with exactly one verdict line:
+VIBEDEV_VERDICT: PASS
+or
+VIBEDEV_VERDICT: FAIL
+"""
+
+
+def _build_finalizer_prompt(
+    user_prompt: str,
+    developer_report: str,
+    tester_report: str,
+    *,
+    passed: bool,
+) -> str:
+    status = "passed" if passed else "failed"
+    return f"""User request:
+{user_prompt}
+
+The coded vibedev team workflow has finished with status: {status}.
+
+Developer report:
+{developer_report}
+
+Tester report:
+{tester_report}
+
+Update `.vibedev/plan.md` and `README.md` according to your finalizer system
+instructions.
+"""
 
 
 class _TranscriptLogger:
@@ -152,6 +421,11 @@ class _TranscriptLogger:
     def write_footer(self) -> None:
         ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self._fh.write(f"\n=== vibedev run ended {ts} ===\n")
+        self._fh.flush()
+
+    def write_stage(self, label: str) -> None:
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        self._fh.write(f"[{ts}] stage: {label}\n\n")
         self._fh.flush()
 
     def log_message(self, message: Any) -> None:

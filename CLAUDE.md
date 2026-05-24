@@ -64,35 +64,30 @@ the workspace, so the caller can open / inspect the generated code afterwards.
 
 ### Team mode
 
-`set_team([...])` opts into a multi-agent run. Pass a list of **subagent**
-role names (currently `"developer"` and `"tester"`). When the list is
-non-empty:
+`set_team([...])` opts into a multi-agent run. Pass a list of **role** names
+(currently `"developer"` and `"tester"`). When both roles are configured,
+Python owns the lifecycle: run developer, run tester, parse the tester's
+`VIBEDEV_VERDICT`, send failures back to the developer, and only finalize
+after tester pass. This is deliberately code-owned control flow rather than
+a manager-prompt convention.
 
-- The main agent runs a **manager** system prompt — it plans, delegates via
-  the Task tool, and integrates results. It does *not* write code itself
-  unless no developer is on the team.
-- Each named role is exposed as a subagent via
-  `ClaudeAgentOptions.agents`, so the manager can dispatch atomic tasks to it
-  through the Task tool.
+The SDK-native manager prompt still exists as a fallback for unusual teams
+that do not include both `"developer"` and `"tester"`. The `"manager"` role
+is **implicit** in that fallback and `set_team(...)` rejects it if listed
+explicitly; users never configure it as a peer role.
 
-The `"manager"` role is **implicit** — it is always the main agent when a
-team is configured, and `set_team(...)` rejects it if listed explicitly.
-This avoids the manager-as-peer confusion: structurally the manager is the
-orchestrator, not a team member.
-
-**Duplicates are meaningful.** `set_team(["developer", "developer", "tester"])`
-gives the manager **two distinct developer subagents** (named `developer`
-and `developer-2` to the SDK) that it can dispatch to in parallel for
-independent subtasks. The user only writes role names; the instance-naming
-scheme is internal to `roles.py`. The manager prompt grows a parallelism
-note whenever the team has more than one member.
+**Duplicates are preserved in config.** `set_team(["developer", "developer",
+"tester"])` records two developer entries and preserves their per-role model
+overrides. The coded developer/tester loop currently uses the first matching
+developer and tester for the serial verification loop; duplicate instances
+remain available to the SDK-native manager fallback.
 
 **Per-role models.** Each list entry is either a bare role name (inherits the
 main-agent model from `set_model(...)`) or a `(role, model)` tuple that
 overrides just that instance. The forms mix freely:
 
 ```python
-vibedev.set_model("claude-opus-4-7")    # the manager
+vibedev.set_model("claude-opus-4-7")    # finalizer / fallback manager model
 vibedev.set_team([
     ("developer", "claude-haiku-4-5"),
     ("developer", "claude-haiku-4-5"),
@@ -101,29 +96,17 @@ vibedev.set_team([
 ```
 
 The model string is passed straight to the SDK, so aliases (`"haiku"`,
-`"sonnet"`, `"opus"`, `"inherit"`) work alongside full IDs. When at least one
-subagent runs a different model from the manager, `build_manager_prompt`
-annotates each instance with its model in the system prompt and adds a note
-telling the manager to weight delegation decisions accordingly (don't ask a
-Haiku subagent to do deep-reasoning work). When the team is homogeneous,
-those annotations are omitted to keep the prompt clean.
-
-Under the hood, `subagents_for(team, default_model)` uses
-`dataclasses.replace(SUBAGENT_ROLES[role], model=model or default_model)`
-to materialise a fresh `AgentDefinition` per instance — the registry holds
-templates, not the live objects passed to the SDK.
+`"sonnet"`, `"opus"`, `"inherit"`) work alongside full IDs. Bare role entries
+inherit the main model from `set_model(...)`; tuple entries override just
+that role.
 
 When `set_team([])` (the default), team mode is off entirely: the main agent
 runs the single-orchestrator prompt (`ORCHESTRATOR_SYSTEM_PROMPT`) and no
 subagents are exposed. The non-team path is preserved bit-for-bit.
 
-**On turns.** We do not set `max_turns` on either the main agent
-(`ClaudeAgentOptions.max_turns`) or any subagent
-(`AgentDefinition.maxTurns`). SDK defaults apply. Agents do not strictly
-alternate — the manager produces a message that may contain one or more
-Task tool calls, each Task spawns a subagent that runs its own internal
-loop to completion, and only then does the manager produce its next
-message. So "turns" is a per-agent concept, not a global round-robin.
+**On turns.** We do not set `max_turns`; SDK defaults apply. In the coded
+developer/tester loop, each role is a separate `query(...)` call that runs to
+completion before Python advances to the next step.
 
 ### CLI mirror
 
@@ -181,26 +164,19 @@ The package is intentionally small — six modules under `src/vibedev/`:
 - **`roles.py`** — the team-mode prompt registry. Holds the static
   `DEVELOPER_PROMPT` and `TESTER_PROMPT`, the `SUBAGENT_ROLES` dict mapping
   role name → `claude_agent_sdk.AgentDefinition` *templates* (model=None),
-  and two pure functions: `build_manager_prompt(team, default_model)` which
-  renders the manager prompt with the current team listing baked in, and
-  `subagents_for(team, default_model)` which materialises fresh
-  `AgentDefinition` instances via `dataclasses.replace` so each subagent
-  can carry its own model. Both functions take the manager's model as
-  `default_model` so bare-role entries (no per-role override) inherit it.
-  The "don't leave servers alive" rule is duplicated into the developer and
-  tester prompts because in team mode they're the ones holding the bash
-  tool, not the manager. The manager prompt also owns the `.vibedev/plan.md`
-  contract (see "Resumability" below) — the manager is the only team member
-  that writes the plan file; subagents just do the work it dispatches.
+  and fallback manager helpers (`build_manager_prompt` / `subagents_for`) for
+  teams that do not include both developer and tester. The tester prompt must
+  end with `VIBEDEV_VERDICT: PASS` or `VIBEDEV_VERDICT: FAIL`; `core.py`
+  parses that machine-readable line to drive the fix/retest loop.
 - **`core.py`** — `prompt(...)` is the public entry point. It validates the
   user prompt, snapshots config via `get_config()`, resolves the workspace via
   `ensure_workspace(...)`, prepares a transcript log path via
   `_prepare_log_path(...)`, prints a header to stderr (unless `quiet`), and
-  uses `anyio.run` to drive the async `_run`. `_run` branches on
-  `cfg["team"]`: if non-empty it builds `ClaudeAgentOptions` with the manager
-  prompt and `agents=subagents_for(team)`; otherwise it falls back to the
-  single-orchestrator path with `ORCHESTRATOR_SYSTEM_PROMPT`. It then iterates
-  `claude_agent_sdk.query(...)`, fanning each message out to (a) a
+  uses `anyio.run` to drive the async `_run`. `_run` branches on team shape:
+  developer+tester teams use the coded lifecycle in
+  `_run_coded_team_workflow`; solo mode uses `ORCHESTRATOR_SYSTEM_PROMPT`;
+  other team shapes use the fallback SDK-native manager prompt. Every
+  `claude_agent_sdk.query(...)` message is fanned out to (a) a
   `_TranscriptLogger` writing to `<workspace>.vibedev-logs/<UTC>.log` (a
   **sibling** of the workspace, deliberately outside it — see "Transcript
   logging" below) and (b) `_print_message` for live stdout (skipped when
@@ -233,17 +209,18 @@ The package is intentionally small — six modules under `src/vibedev/`:
 7. When the agent signals done, `_run` returns, `anyio.run` unblocks, and
    `prompt()` returns the workspace `Path`.
 
-### Multi-agent layering: SDK-native, not hand-rolled
+### Multi-agent layering: coded lifecycle, SDK execution
 
-vibedev does not implement its own agent-to-agent router. The team-mode
-manager dispatches to subagents through the **SDK's** Task tool, which is
-already supported by `claude-agent-sdk` via `ClaudeAgentOptions.agents` and
-is far cheaper than a hand-rolled coordinator (no extra process, no extra
-turn loop, subagents inherit the manager's `cwd`). The role catalog in
-`roles.py` is intentionally tiny — three named prompts (manager, developer,
-tester) and a registry — because adding a custom coordination layer above
-the SDK is exactly the wrong place to invest until a concrete use case
-shows the SDK's primitives are the bottleneck.
+vibedev owns the high-level team lifecycle in Python when both `developer`
+and `tester` are configured. It runs the developer agent, runs the tester
+agent, parses the tester's `VIBEDEV_VERDICT`, sends failures back to the
+developer, and finalizes only after tester pass. The SDK still does the heavy
+agent execution for each role via `query(...)`; vibedev only owns the ordering
+and retry policy.
+
+The SDK-native manager/Task-tool path remains as a fallback for unusual team
+shapes, but the normal developer+tester path should not rely on a prompt to
+remember that verification gates completion.
 
 Custom roles are deliberately **not** supported in v1. The role set is
 closed (`developer`, `tester`) so the public surface stays small; if a user
@@ -256,10 +233,9 @@ models *are* supported via the `(role, model)` tuple form of `set_team`
 Because the workspace is reused as-is across runs (no timestamp nesting), a
 second `vibedev.prompt(...)` call against the same workspace can pick up
 where the previous one left off — *if* there's enough state on disk to
-reconstruct progress. The agent prompts (`ORCHESTRATOR_SYSTEM_PROMPT` and
-the manager prompt in `roles.py`) make this concrete: both require the
-agent to maintain `.vibedev/plan.md` (under the workspace) as a checklist
-of atomic tasks, and to read it on startup before doing anything else.
+reconstruct progress. The solo orchestrator prompt, fallback manager prompt,
+and coded team finalizer all use `.vibedev/plan.md` (under the workspace) as
+a checklist of atomic tasks.
 
 The contract:
 
@@ -272,10 +248,7 @@ The contract:
   prompt introduces, and resumes from the top `[ ]`.
 - **Plan modification by the user**: the user can edit `.vibedev/plan.md`
   directly (the solo orchestrator prompt also accepts plan-modification
-  requests phrased in natural language, e.g. "drop the Docker step"). The
-  manager prompt does *not* explicitly handle natural-language plan edits
-  — in team mode, the user is expected to drop to solo (`set_team([])`) or
-  edit the file by hand.
+  requests phrased in natural language, e.g. "drop the Docker step").
 - **File location is hidden**: `.vibedev/` rather than `PLAN.md` at the
   workspace root, so the plan file does not ship as a project artifact in
   the generated code.

@@ -3,13 +3,13 @@
 A *role* is a named system prompt that vibedev can assign to an agent. When
 the user calls ``vibedev.set_team([...])`` with subagent role names, vibedev:
 
-  - sets the *main* agent's system prompt to a manager prompt that lists the
-    exact subagents on the team, and
-  - exposes each named subagent via ``ClaudeAgentOptions.agents`` so the
-    manager can delegate work via the Task tool.
+  - runs a Python-owned developer/tester loop when both roles are configured,
+    so verification gates completion in code, or
+  - falls back to an SDK-native manager prompt for unusual teams that do not
+    include both a developer and a tester.
 
 Available subagent roles live in :data:`SUBAGENT_ROLES`. The ``manager`` role
-is **implicit** — it is always the main agent when a team is configured, and
+is **implicit** — it is the main-agent coordinator for fallback team runs, and
 users must not list it in ``set_team(...)``.
 """
 
@@ -51,6 +51,14 @@ manually.
 
 Report back with: what you tested, what passed, what failed (with exact error
 messages and the smallest reproducer), and what should be fixed.
+
+End every response with exactly one verdict line:
+
+    VIBEDEV_VERDICT: PASS
+
+or:
+
+    VIBEDEV_VERDICT: FAIL
 """
 
 SUBAGENT_ROLES: dict[str, AgentDefinition] = {
