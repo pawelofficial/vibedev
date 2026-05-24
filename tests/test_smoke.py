@@ -14,6 +14,7 @@ from vibedev.core import (
     _build_knowledge_curator_prompt,
     _build_readme_update_prompt,
     _build_tester_prompt,
+    _current_request_task_index,
     _extract_verdict,
     _extract_proposed_tasks,
     _first_role_model,
@@ -412,7 +413,7 @@ def test_extract_proposed_tasks_from_analyst_brief():
 
 def test_apply_analyst_review_appends_missing_tasks(tmp_path):
     plan = _load_or_create_team_plan(tmp_path, "build lineage app")
-    _apply_analyst_review(
+    added_indices = _apply_analyst_review(
         tmp_path,
         plan,
         """## Missing Requirements
@@ -436,6 +437,28 @@ def test_apply_analyst_review_appends_missing_tasks(tmp_path):
     assert "- [ ] Add lineage graph search" in plan_text
     assert [task.text for task in updated_plan.tasks].count("build lineage app") == 1
     assert "Analyst review:" in plan_text
+    assert added_indices == [1]
+
+
+def test_current_request_task_index_skips_stale_pending_backlog():
+    plan = _parse_team_plan(
+        """# vibedev plan
+
+## Goal
+Build an app.
+
+## Tasks
+- [x] Add drag behavior
+- [ ] Old analyst subtask for drag
+- [ ] Modularize backend
+
+## History
+- 2026-05-24 - Completed: Add drag behavior
+""",
+        fallback_goal="fallback",
+    )
+
+    assert _current_request_task_index(plan, "Implement this refactor: Modularize backend") == 2
 
 
 def test_build_common_knowledge_discovers_docs_tests_and_files(tmp_path):
@@ -534,6 +557,128 @@ def test_coded_team_workflow_runs_knowledge_curator_first(tmp_path, monkeypatch)
     assert calls[0].startswith("User request:")
     assert "Current generated common knowledge draft:" in calls[0]
     assert "Curated workspace structure." in common_knowledge
+
+
+def test_coded_team_workflow_marks_analyst_subtasks_done_after_parent_pass(
+    tmp_path,
+    monkeypatch,
+):
+    async def fake_run_query(prompt, options, logger, quiet):  # noqa: ANN001, ARG001
+        if "Current generated common knowledge draft:" in prompt:
+            return "## Code Structure\n- Curated workspace structure."
+        if "Current Python-owned plan:" in prompt:
+            return """## Missing Requirements
+
+## Proposed Tasks
+- [ ] Add route module
+- [ ] Add schema service module
+
+## Acceptance Criteria
+- Backend still serves the same API.
+
+## Risks
+"""
+        if "End your response with exactly one verdict line:" in prompt:
+            return "verified\nVIBEDEV_VERDICT: PASS"
+        return "developer or README report"
+
+    class Logger:
+        def write_stage(self, label: str) -> None:  # noqa: ARG002
+            return None
+
+    monkeypatch.setattr(core, "_run_query", fake_run_query)
+    cfg = {
+        "permission_mode": "bypassPermissions",
+        "model": "claude-opus-4-7",
+        "workspace_root": str(tmp_path),
+        "team": [("business_analyst", None), ("developer", None), ("tester", None)],
+    }
+
+    import anyio
+
+    anyio.run(
+        core._run_coded_team_workflow,
+        "Implement this refactor: Modularize backend",
+        tmp_path,
+        cfg,
+        True,
+        Logger(),
+    )
+
+    plan_text = (tmp_path / ".vibedev" / "plan.md").read_text(encoding="utf-8")
+
+    assert "- [x] Modularize backend" in plan_text
+    assert "- [x] Add route module" in plan_text
+    assert "- [x] Add schema service module" in plan_text
+
+
+def test_coded_team_workflow_prioritizes_current_request_over_old_pending(
+    tmp_path,
+    monkeypatch,
+):
+    (tmp_path / ".vibedev").mkdir()
+    (tmp_path / ".vibedev" / "plan.md").write_text(
+        """# vibedev plan
+
+## Goal
+Build an app.
+
+## Tasks
+- [x] Add drag behavior
+- [ ] Old analyst subtask for drag
+
+## History
+- 2026-05-24 - Completed: Add drag behavior
+""",
+        encoding="utf-8",
+    )
+    developer_prompts: list[str] = []
+
+    async def fake_run_query(prompt, options, logger, quiet):  # noqa: ANN001, ARG001
+        if "Current generated common knowledge draft:" in prompt:
+            return "## Code Structure\n- Curated workspace structure."
+        if "Current Python-owned plan:" in prompt:
+            return """## Missing Requirements
+
+## Proposed Tasks
+
+## Acceptance Criteria
+- Backend remains equivalent.
+
+## Risks
+"""
+        if "End your response with exactly one verdict line:" in prompt:
+            return "verified\nVIBEDEV_VERDICT: PASS"
+        if prompt.startswith("Task:"):
+            developer_prompts.append(prompt)
+        return "developer or README report"
+
+    class Logger:
+        def write_stage(self, label: str) -> None:  # noqa: ARG002
+            return None
+
+    monkeypatch.setattr(core, "_run_query", fake_run_query)
+    cfg = {
+        "permission_mode": "bypassPermissions",
+        "model": "claude-opus-4-7",
+        "workspace_root": str(tmp_path),
+        "team": [("business_analyst", None), ("developer", None), ("tester", None)],
+    }
+
+    import anyio
+
+    anyio.run(
+        core._run_coded_team_workflow,
+        "Implement this refactor: Modularize backend",
+        tmp_path,
+        cfg,
+        True,
+        Logger(),
+    )
+
+    assert developer_prompts
+    assert "Modularize backend" in developer_prompts[0]
+    assert "Old analyst subtask for drag" not in developer_prompts[0]
 
 
 def test_prompt_summaries_do_not_copy_full_prompt():

@@ -193,6 +193,7 @@ async def _run_coded_team_workflow(
         curated_context=knowledge_curator_report,
     )
     analyst_brief = ""
+    analyst_added_task_indices: list[int] = []
     if analyst_model is not None:
         analyst_options = _options_for_role(
             workspace,
@@ -207,7 +208,7 @@ async def _run_coded_team_workflow(
             logger,
             quiet,
         )
-        _apply_analyst_review(workspace, plan, analyst_brief)
+        analyst_added_task_indices = _apply_analyst_review(workspace, plan, analyst_brief)
         common_knowledge = _write_common_knowledge(
             workspace,
             user_prompt,
@@ -215,7 +216,9 @@ async def _run_coded_team_workflow(
             curated_context=knowledge_curator_report,
         )
 
-    task_index = _next_pending_task_index(plan)
+    task_index = _current_request_task_index(plan, user_prompt)
+    if task_index is None:
+        task_index = _next_pending_task_index(plan)
     if task_index is None:
         return
     task = plan.tasks[task_index].text
@@ -275,6 +278,7 @@ async def _run_coded_team_workflow(
         verdict = _extract_verdict(tester_report)
         if verdict is True:
             _mark_plan_task_done(workspace, plan, task_index)
+            _mark_plan_tasks_done(workspace, plan, analyst_added_task_indices)
             plan_text_after_checkoff = _read_plan_text(workspace)
             _announce_stage("update README after passed team run", logger, quiet)
             await _run_query(
@@ -459,11 +463,17 @@ def _render_plan_for_prompt(plan: _TeamPlan) -> str:
     return "\n".join(lines)
 
 
-def _apply_analyst_review(workspace: Path, plan: _TeamPlan, analyst_brief: str) -> None:
+def _apply_analyst_review(
+    workspace: Path,
+    plan: _TeamPlan,
+    analyst_brief: str,
+) -> list[int]:
     proposed_tasks = _extract_proposed_tasks(analyst_brief)
     added = False
+    added_task_indices: list[int] = []
     for task_text in proposed_tasks:
         if _add_plan_task_if_missing(plan, task_text):
+            added_task_indices.append(len(plan.tasks) - 1)
             added = True
 
     if analyst_brief.strip():
@@ -473,6 +483,7 @@ def _apply_analyst_review(workspace: Path, plan: _TeamPlan, analyst_brief: str) 
 
     if added:
         _write_team_plan(workspace, plan)
+    return added_task_indices
 
 
 def _extract_proposed_tasks(analyst_brief: str) -> list[str]:
@@ -732,10 +743,38 @@ def _next_pending_task_index(plan: _TeamPlan) -> int | None:
     return None
 
 
+def _current_request_task_index(plan: _TeamPlan, user_prompt: str) -> int | None:
+    current_task = _summarize_task(user_prompt)
+    current_task_normalized = _normalize_task(current_task)
+    for index, task in enumerate(plan.tasks):
+        if not task.done and _normalize_task(task.text) == current_task_normalized:
+            return index
+    return None
+
+
 def _mark_plan_task_done(workspace: Path, plan: _TeamPlan, task_index: int) -> None:
     plan.tasks[task_index].done = True
     plan.history.append(f"{_today()} - Completed: {_summarize_task(plan.tasks[task_index].text)}")
     _write_team_plan(workspace, plan)
+
+
+def _mark_plan_tasks_done(
+    workspace: Path,
+    plan: _TeamPlan,
+    task_indices: list[int],
+) -> None:
+    changed = False
+    for task_index in sorted(set(task_indices)):
+        if task_index < 0 or task_index >= len(plan.tasks):
+            continue
+        task = plan.tasks[task_index]
+        if task.done:
+            continue
+        task.done = True
+        plan.history.append(f"{_today()} - Completed: {_summarize_task(task.text)}")
+        changed = True
+    if changed:
+        _write_team_plan(workspace, plan)
 
 
 def _record_plan_blocker(
@@ -815,7 +854,11 @@ def _summarize_history_entry(entry: str) -> str:
 def _extract_feature_summary(text: str) -> str:
     one_line = _one_line(text)
     one_line_lower = one_line.casefold()
-    for marker in ("implement this feature:", "implement this ui feature:"):
+    for marker in (
+        "implement this feature:",
+        "implement this ui feature:",
+        "implement this refactor:",
+    ):
         marker_index = one_line_lower.find(marker)
         if marker_index != -1:
             after_marker = one_line[marker_index + len(marker) :].strip()
@@ -825,7 +868,11 @@ def _extract_feature_summary(text: str) -> str:
     lines = [line.strip() for line in text.splitlines()]
     for index, line in enumerate(lines):
         normalized = line.rstrip(":").casefold()
-        if normalized in {"implement this feature", "implement this ui feature"}:
+        if normalized in {
+            "implement this feature",
+            "implement this ui feature",
+            "implement this refactor",
+        }:
             for candidate in lines[index + 1 :]:
                 if candidate and not candidate.endswith(":"):
                     return _strip_list_marker(candidate)

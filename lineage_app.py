@@ -89,6 +89,23 @@ Requirements:
 - Add or update tests where practical for the graph/node positioning behavior.
 - Update README.md if the UI behavior or usage instructions change.
 """
+
+FEATURE_PROMPT = """
+Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
+
+Implement this refactor:
+Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
+
+Requirements:
+- Preserve all existing user-facing behavior and API responses.
+- Split backend responsibilities into focused modules where appropriate, for example app creation/routing, schema loading, graph/model access, and API handlers.
+- Keep `app.py` as a small runnable entry point or application factory wrapper.
+- Avoid changing frontend behavior unless a backend import path or static-serving detail requires it.
+- Update tests where needed so they import the app through the new structure.
+- Run the relevant pytest suite and fix regressions caused by the refactor.
+- Update `README.md` if setup, run commands, or project structure change.
+"""
+
 USER_PROMPT=FEATURE_PROMPT
 
 workspace = vibedev.prompt(
