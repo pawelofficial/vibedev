@@ -26,7 +26,7 @@ vibedev.set_team([
 
 # --- run ---------------------------------------------------------------------
 
-USER_PROMPT = "build a hello-world flask app that returns JSON from /hello"
+USER_PROMPT = "add a goodbye endpoint to the app "
 
 workspace = vibedev.prompt(
     USER_PROMPT,
