@@ -173,9 +173,11 @@ The package is intentionally small — six modules under `src/vibedev/`:
 - **`prompts.py`** — `ORCHESTRATOR_SYSTEM_PROMPT`. The system prompt used
   when **no team is configured** — a single self-sufficient agent that
   plans, implements, verifies (without leaving long-running processes
-  alive), and writes a short README. This is the biggest lever on
-  no-team-mode behavior; when iterating on solo-run output quality, edit
-  this first.
+  alive), and writes a short README. It also owns the `.vibedev/plan.md`
+  contract (see "Resumability" below): read-and-reconcile on startup,
+  append new asks instead of overwriting, mark items off as they
+  complete. This is the biggest lever on no-team-mode behavior; when
+  iterating on solo-run output quality, edit this first.
 - **`roles.py`** — the team-mode prompt registry. Holds the static
   `DEVELOPER_PROMPT` and `TESTER_PROMPT`, the `SUBAGENT_ROLES` dict mapping
   role name → `claude_agent_sdk.AgentDefinition` *templates* (model=None),
@@ -187,7 +189,9 @@ The package is intentionally small — six modules under `src/vibedev/`:
   `default_model` so bare-role entries (no per-role override) inherit it.
   The "don't leave servers alive" rule is duplicated into the developer and
   tester prompts because in team mode they're the ones holding the bash
-  tool, not the manager.
+  tool, not the manager. The manager prompt also owns the `.vibedev/plan.md`
+  contract (see "Resumability" below) — the manager is the only team member
+  that writes the plan file; subagents just do the work it dispatches.
 - **`core.py`** — `prompt(...)` is the public entry point. It validates the
   user prompt, snapshots config via `get_config()`, resolves the workspace via
   `ensure_workspace(...)`, prints a header to stderr (unless `quiet`), and
@@ -238,6 +242,47 @@ closed (`developer`, `tester`) so the public surface stays small; if a user
 wants finer control over prompts, they fork them in `roles.py`. Per-role
 models *are* supported via the `(role, model)` tuple form of `set_team`
 (see "Per-role models" above).
+
+### Resumability via `.vibedev/plan.md`
+
+Because the workspace is reused as-is across runs (no timestamp nesting), a
+second `vibedev.prompt(...)` call against the same workspace can pick up
+where the previous one left off — *if* there's enough state on disk to
+reconstruct progress. The agent prompts (`ORCHESTRATOR_SYSTEM_PROMPT` and
+the manager prompt in `roles.py`) make this concrete: both require the
+agent to maintain `.vibedev/plan.md` (under the workspace) as a checklist
+of atomic tasks, and to read it on startup before doing anything else.
+
+The contract:
+
+- **First run**: agent decomposes the user prompt into a `## Tasks` list of
+  `[ ]` items in `.vibedev/plan.md` and works through them, flipping each
+  to `[x]` as it completes.
+- **Subsequent runs**: agent reads the plan, reconciles `[x]` items against
+  the actual workspace state (flipping any item back to `[ ]` if its code
+  is missing or broken), appends new `[ ]` items for any work the current
+  prompt introduces, and resumes from the top `[ ]`.
+- **Plan modification by the user**: the user can edit `.vibedev/plan.md`
+  directly (the solo orchestrator prompt also accepts plan-modification
+  requests phrased in natural language, e.g. "drop the Docker step"). The
+  manager prompt does *not* explicitly handle natural-language plan edits
+  — in team mode, the user is expected to drop to solo (`set_team([])`) or
+  edit the file by hand.
+- **File location is hidden**: `.vibedev/` rather than `PLAN.md` at the
+  workspace root, so the plan file does not ship as a project artifact in
+  the generated code.
+- **Never delete the plan on success**: it documents history across runs.
+
+This is **prompt-layer behavior only** — vibedev itself does not parse,
+validate, or even read the plan file. If you change the file path, the
+format, or the reconciliation rules, the source of truth is in
+`prompts.py` and the `_MANAGER_BASE` template in `roles.py`. The two
+prompts duplicate the format spec deliberately: they're independent
+agents and the cost of one prompt drifting away from the other is low
+(only one runs per `vibedev.prompt(...)` call).
+
+A killed-mid-task run leaves the workspace partially mutated; the
+reconciliation step on the next run is best-effort, not transactional.
 
 ### Runtime dependency: Claude Code CLI
 
