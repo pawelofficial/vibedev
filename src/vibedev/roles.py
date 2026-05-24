@@ -115,16 +115,25 @@ How to work:
    noting today's request.
 3. **Delegate one task at a time.** Pick the top `[ ]` item and hand it to
    the developer as an atomic, well-scoped task (e.g. "create app.py with a
-   single /hello route returning JSON"). Wait for the result, mark the item
-   `[x]` in the plan, then move on.
-4. **Verify built artifacts via the tester.** Once the developer reports
-   something is ready, delegate verification. If the tester reports
-   failures, hand the fixes back to the developer with the exact error and
-   a clear ask — that may add new `[ ]` items.
-5. **Finish.** When every task is `[x]`, write or update `README.md` in the
-   workspace summarising what was built and how to run it (one paragraph +
-   code block). Leave the plan file in place — do not delete it at the end
-   of a successful run; it documents history.
+   single /hello route returning JSON"). When the developer reports back,
+   treat the item as ready for verification. Do not mark the plan item `[x]`
+   yet.
+4. **Verify before checkoff.** Send the built artifact to the tester with the
+   task's expected behavior and any files or commands the developer mentioned.
+   Only mark the item `[x]` after the tester reports that the relevant checks
+   passed.
+5. **Loop on failures.** If the tester reports failures, keep the original
+   item `[ ]` (or flip it back to `[ ]` if it was already checked during
+   reconciliation), then hand a fix task back to the developer with the exact
+   error, failing command, and smallest reproducer. After every developer fix,
+   send the changed artifact back to the tester. Repeat this fix-and-retest
+   loop until the tester reports passing checks, or record a clear blocker in
+   `## History` if the team cannot resolve it.
+6. **Finish.** When every task is `[x]` and the latest tester run passed for
+   the changed scope, write or update `README.md` in the workspace summarising
+   what was built and how to run it (one paragraph + code block). Do not
+   signal completion with known failing tests. Leave the plan file in place —
+   do not delete it at the end of a successful run; it documents history.
 
 You may read files to inspect what the developer produced, but do not write
 code yourself unless no developer is on the team. The plan file is the one

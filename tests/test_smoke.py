@@ -12,6 +12,7 @@ from vibedev.config import (
     set_team,
     set_workspace_root,
 )
+from vibedev.roles import build_manager_prompt
 from vibedev.workspace import ensure_workspace
 
 
@@ -198,3 +199,16 @@ def test_get_config_team_is_copy():
         assert get_config()["team"] == [("developer", None)]  # mutation didn't leak
     finally:
         set_team(original)
+
+
+def test_manager_prompt_requires_verify_fix_retest_loop():
+    prompt = build_manager_prompt(
+        [("developer", None), ("tester", None)],
+        default_model="claude-opus-4-7",
+    )
+
+    assert "Do not mark the plan item `[x]` yet." in prompt
+    assert "Only mark the item `[x]` after the tester reports" in prompt
+    assert "After every developer fix, send the changed artifact back to the tester." in prompt
+    assert "Do not signal completion with known failing tests." in prompt
+    assert "Wait for the result, mark the item" not in prompt
