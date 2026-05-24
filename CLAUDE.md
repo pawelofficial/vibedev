@@ -35,7 +35,7 @@ vibedev "build a hello-world flask app"
 
 ## Public API (how users use vibedev)
 
-The package exposes exactly five names from `vibedev/__init__.py`:
+The package exposes exactly six names from `vibedev/__init__.py`:
 
 ```python
 import vibedev
@@ -43,6 +43,7 @@ import vibedev
 vibedev.set_permissions("bypassPermissions")    # or acceptEdits / default / plan
 vibedev.set_model("claude-opus-4-7")            # any model ID the Claude CLI accepts
 vibedev.set_workspace_root("./vibedev-output")  # where projects land
+vibedev.set_team(["developer", "tester"])       # opt into team mode (see "Team mode" below)
 
 workspace = vibedev.prompt(
     "build a hello-world flask app that returns JSON from /hello",
@@ -53,13 +54,76 @@ workspace = vibedev.prompt(
 vibedev.get_config()  # returns a copy of the current config dict
 ```
 
-Mental model: the three `set_*` calls mutate module-level state. The next
+Mental model: the four `set_*` calls mutate module-level state. The next
 `prompt()` reads whatever was last set. There's no `Vibedev` class, no context
 manager, no per-call config object — global state is the deliberate UX, since
 script-driven users want to configure once and fire many prompts.
 
 `prompt()` blocks until the agent is done and returns the absolute `Path` of
 the workspace, so the caller can open / inspect the generated code afterwards.
+
+### Team mode
+
+`set_team([...])` opts into a multi-agent run. Pass a list of **subagent**
+role names (currently `"developer"` and `"tester"`). When the list is
+non-empty:
+
+- The main agent runs a **manager** system prompt — it plans, delegates via
+  the Task tool, and integrates results. It does *not* write code itself
+  unless no developer is on the team.
+- Each named role is exposed as a subagent via
+  `ClaudeAgentOptions.agents`, so the manager can dispatch atomic tasks to it
+  through the Task tool.
+
+The `"manager"` role is **implicit** — it is always the main agent when a
+team is configured, and `set_team(...)` rejects it if listed explicitly.
+This avoids the manager-as-peer confusion: structurally the manager is the
+orchestrator, not a team member.
+
+**Duplicates are meaningful.** `set_team(["developer", "developer", "tester"])`
+gives the manager **two distinct developer subagents** (named `developer`
+and `developer-2` to the SDK) that it can dispatch to in parallel for
+independent subtasks. The user only writes role names; the instance-naming
+scheme is internal to `roles.py`. The manager prompt grows a parallelism
+note whenever the team has more than one member.
+
+**Per-role models.** Each list entry is either a bare role name (inherits the
+main-agent model from `set_model(...)`) or a `(role, model)` tuple that
+overrides just that instance. The forms mix freely:
+
+```python
+vibedev.set_model("claude-opus-4-7")    # the manager
+vibedev.set_team([
+    ("developer", "claude-haiku-4-5"),
+    ("developer", "claude-haiku-4-5"),
+    ("tester",    "claude-sonnet-4-6"),
+])
+```
+
+The model string is passed straight to the SDK, so aliases (`"haiku"`,
+`"sonnet"`, `"opus"`, `"inherit"`) work alongside full IDs. When at least one
+subagent runs a different model from the manager, `build_manager_prompt`
+annotates each instance with its model in the system prompt and adds a note
+telling the manager to weight delegation decisions accordingly (don't ask a
+Haiku subagent to do deep-reasoning work). When the team is homogeneous,
+those annotations are omitted to keep the prompt clean.
+
+Under the hood, `subagents_for(team, default_model)` uses
+`dataclasses.replace(SUBAGENT_ROLES[role], model=model or default_model)`
+to materialise a fresh `AgentDefinition` per instance — the registry holds
+templates, not the live objects passed to the SDK.
+
+When `set_team([])` (the default), team mode is off entirely: the main agent
+runs the single-orchestrator prompt (`ORCHESTRATOR_SYSTEM_PROMPT`) and no
+subagents are exposed. The non-team path is preserved bit-for-bit.
+
+**On turns.** We do not set `max_turns` on either the main agent
+(`ClaudeAgentOptions.max_turns`) or any subagent
+(`AgentDefinition.maxTurns`). SDK defaults apply. Agents do not strictly
+alternate — the manager produces a message that may contain one or more
+Task tool calls, each Task spawns a subagent that runs its own internal
+loop to completion, and only then does the manager produce its next
+message. So "turns" is a per-agent concept, not a global round-robin.
 
 ### CLI mirror
 
@@ -86,15 +150,19 @@ These three defaults define the package's UX. Don't change them casually:
 
 ## Architecture
 
-The package is intentionally small — five modules under `src/vibedev/`:
+The package is intentionally small — six modules under `src/vibedev/`:
 
 - **`config.py`** — owns a single module-level dict (`_config`) and the `set_*`
   setters that mutate it. State is global on purpose (see "Public API" above).
   `set_permissions` validates against `_VALID_PERMISSIONS`; `set_model` /
-  `set_workspace_root` reject empty strings. `get_config()` returns a **copy**
-  (`dict(_config)`) so callers cannot bypass the setters by mutating the
-  returned dict. The `Config` TypedDict and `PermissionMode` literal are the
-  type contract.
+  `set_workspace_root` reject empty strings; `set_team` validates against
+  `_VALID_SUBAGENT_ROLES`, rejects `"manager"` explicitly, and de-dupes while
+  preserving order. `get_config()` returns a **copy** (`dict(_config)` plus a
+  fresh copy of the inner `team` list) so callers cannot bypass the setters
+  by mutating the returned dict. The role-name set is duplicated here (not
+  imported from `roles.py`) so this module stays importable without
+  `claude_agent_sdk` — keeps config tests cheap and the CLI's `--help` fast.
+  The `Config` TypedDict and `PermissionMode` literal are the type contract.
 - **`workspace.py`** — `ensure_workspace(path)` does `Path(path).expanduser()
   .resolve()` then `mkdir(parents=True, exist_ok=True)` and returns the
   absolute path. The agent is scoped to this directory via the SDK's `cwd`
@@ -102,16 +170,32 @@ The package is intentionally small — five modules under `src/vibedev/`:
   elsewhere. There is intentionally **no timestamp nesting** — the configured
   `workspace_root` (or per-call `workspace=`) is used as-is. Re-running with
   the same path operates on whatever's already there.
-- **`prompts.py`** — `ORCHESTRATOR_SYSTEM_PROMPT`. This is the single biggest
-  lever on agent behavior; when iterating on output quality, edit this first.
-  Current rules: plan briefly, implement, verify **without leaving long-running
-  processes alive**, then write a short README inside the workspace.
+- **`prompts.py`** — `ORCHESTRATOR_SYSTEM_PROMPT`. The system prompt used
+  when **no team is configured** — a single self-sufficient agent that
+  plans, implements, verifies (without leaving long-running processes
+  alive), and writes a short README. This is the biggest lever on
+  no-team-mode behavior; when iterating on solo-run output quality, edit
+  this first.
+- **`roles.py`** — the team-mode prompt registry. Holds the static
+  `DEVELOPER_PROMPT` and `TESTER_PROMPT`, the `SUBAGENT_ROLES` dict mapping
+  role name → `claude_agent_sdk.AgentDefinition` *templates* (model=None),
+  and two pure functions: `build_manager_prompt(team, default_model)` which
+  renders the manager prompt with the current team listing baked in, and
+  `subagents_for(team, default_model)` which materialises fresh
+  `AgentDefinition` instances via `dataclasses.replace` so each subagent
+  can carry its own model. Both functions take the manager's model as
+  `default_model` so bare-role entries (no per-role override) inherit it.
+  The "don't leave servers alive" rule is duplicated into the developer and
+  tester prompts because in team mode they're the ones holding the bash
+  tool, not the manager.
 - **`core.py`** — `prompt(...)` is the public entry point. It validates the
   user prompt, snapshots config via `get_config()`, resolves the workspace via
-  `ensure_workspace(...)`, prints a 3-line header to stderr (unless `quiet`),
-  and uses `anyio.run` to drive the async `_run`. `_run` builds a
-  `ClaudeAgentOptions(cwd, permission_mode, model, system_prompt)` and
-  iterates `claude_agent_sdk.query(...)`, streaming each message through
+  `ensure_workspace(...)`, prints a header to stderr (unless `quiet`), and
+  uses `anyio.run` to drive the async `_run`. `_run` branches on
+  `cfg["team"]`: if non-empty it builds `ClaudeAgentOptions` with the manager
+  prompt and `agents=subagents_for(team)`; otherwise it falls back to the
+  single-orchestrator path with `ORCHESTRATOR_SYSTEM_PROMPT`. It then iterates
+  `claude_agent_sdk.query(...)`, streaming each message through
   `_print_message`. `_print_message` is deliberately loose-typed
   (`getattr`-based) so SDK message-shape changes don't break us; it
   intentionally **skips `total_cost_usd`** because that figure reports API
@@ -137,13 +221,23 @@ The package is intentionally small — five modules under `src/vibedev/`:
 7. When the agent signals done, `_run` returns, `anyio.run` unblocks, and
    `prompt()` returns the workspace `Path`.
 
-### Why a single orchestrator (for now)
+### Multi-agent layering: SDK-native, not hand-rolled
 
-There is one agent, not a custom multi-agent router. If the orchestrator
-needs parallel work, it spawns SDK-native subagents — those are already
-supported by `claude-agent-sdk` and cheaper than a hand-rolled coordinator.
-Add a custom multi-agent layer only when a concrete v1 use case shows the
-single-agent approach is the bottleneck.
+vibedev does not implement its own agent-to-agent router. The team-mode
+manager dispatches to subagents through the **SDK's** Task tool, which is
+already supported by `claude-agent-sdk` via `ClaudeAgentOptions.agents` and
+is far cheaper than a hand-rolled coordinator (no extra process, no extra
+turn loop, subagents inherit the manager's `cwd`). The role catalog in
+`roles.py` is intentionally tiny — three named prompts (manager, developer,
+tester) and a registry — because adding a custom coordination layer above
+the SDK is exactly the wrong place to invest until a concrete use case
+shows the SDK's primitives are the bottleneck.
+
+Custom roles are deliberately **not** supported in v1. The role set is
+closed (`developer`, `tester`) so the public surface stays small; if a user
+wants finer control over prompts, they fork them in `roles.py`. Per-role
+models *are* supported via the `(role, model)` tuple form of `set_team`
+(see "Per-role models" above).
 
 ### Runtime dependency: Claude Code CLI
 

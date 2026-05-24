@@ -11,6 +11,7 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 
 from vibedev.config import Config, get_config
 from vibedev.prompts import ORCHESTRATOR_SYSTEM_PROMPT
+from vibedev.roles import build_manager_prompt, subagents_for
 from vibedev.workspace import ensure_workspace
 
 
@@ -33,20 +34,37 @@ def prompt(
 
     if not quiet:
         print(f"[vibedev] workspace: {ws}", file=sys.stderr, flush=True)
-        print(f"[vibedev] model: {cfg['model']}", file=sys.stderr, flush=True)
+        print(f"[vibedev] model: {cfg['model']}  (main agent)", file=sys.stderr, flush=True)
         print(f"[vibedev] permissions: {cfg['permission_mode']}", file=sys.stderr, flush=True)
+        if cfg["team"]:
+            parts = [
+                f"{role}({model or cfg['model']})" for role, model in cfg["team"]
+            ]
+            team_label = ", ".join(parts)
+        else:
+            team_label = "(none — single orchestrator)"
+        print(f"[vibedev] team: {team_label}", file=sys.stderr, flush=True)
 
     anyio.run(_run, user_prompt, ws, cfg, quiet)
     return ws
 
 
 async def _run(user_prompt: str, workspace: Path, cfg: Config, quiet: bool) -> None:
-    options = ClaudeAgentOptions(
-        cwd=str(workspace),
-        permission_mode=cfg["permission_mode"],
-        model=cfg["model"],
-        system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
-    )
+    if cfg["team"]:
+        options = ClaudeAgentOptions(
+            cwd=str(workspace),
+            permission_mode=cfg["permission_mode"],
+            model=cfg["model"],
+            system_prompt=build_manager_prompt(cfg["team"], cfg["model"]),
+            agents=subagents_for(cfg["team"], cfg["model"]),
+        )
+    else:
+        options = ClaudeAgentOptions(
+            cwd=str(workspace),
+            permission_mode=cfg["permission_mode"],
+            model=cfg["model"],
+            system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+        )
     async for message in query(prompt=user_prompt, options=options):
         if not quiet:
             _print_message(message)

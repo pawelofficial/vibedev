@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 
 import vibedev
-from vibedev.config import get_config, set_model, set_permissions, set_workspace_root
+from vibedev.config import (
+    get_config,
+    set_model,
+    set_permissions,
+    set_team,
+    set_workspace_root,
+)
 from vibedev.workspace import ensure_workspace
 
 
@@ -14,6 +20,7 @@ def test_public_api_exports():
     assert callable(vibedev.set_permissions)
     assert callable(vibedev.set_model)
     assert callable(vibedev.set_workspace_root)
+    assert callable(vibedev.set_team)
 
 
 def test_default_config():
@@ -21,6 +28,7 @@ def test_default_config():
     assert cfg["permission_mode"] == "bypassPermissions"
     assert cfg["model"].startswith("claude-")
     assert cfg["workspace_root"]
+    assert cfg["team"] == []
 
 
 def test_set_permissions_valid():
@@ -76,3 +84,117 @@ def test_set_workspace_root_roundtrip():
         assert get_config()["workspace_root"] == "/tmp/vibedev-test"
     finally:
         set_workspace_root(original)
+
+
+def test_set_team_roundtrip_bare_strings():
+    original = get_config()["team"]
+    try:
+        set_team(["developer", "tester"])
+        assert get_config()["team"] == [("developer", None), ("tester", None)]
+    finally:
+        set_team(original)
+
+
+def test_set_team_preserves_duplicates():
+    original = get_config()["team"]
+    try:
+        set_team(["developer", "developer", "tester"])
+        assert get_config()["team"] == [
+            ("developer", None),
+            ("developer", None),
+            ("tester", None),
+        ]
+    finally:
+        set_team(original)
+
+
+def test_set_team_with_model_overrides():
+    original = get_config()["team"]
+    try:
+        set_team(
+            [
+                ("developer", "claude-haiku-4-5"),
+                ("developer", "claude-haiku-4-5"),
+                ("tester", "claude-sonnet-4-6"),
+            ]
+        )
+        assert get_config()["team"] == [
+            ("developer", "claude-haiku-4-5"),
+            ("developer", "claude-haiku-4-5"),
+            ("tester", "claude-sonnet-4-6"),
+        ]
+    finally:
+        set_team(original)
+
+
+def test_set_team_mixed_bare_and_tuple_forms():
+    original = get_config()["team"]
+    try:
+        set_team(["developer", ("developer", "claude-haiku-4-5"), "tester"])
+        assert get_config()["team"] == [
+            ("developer", None),
+            ("developer", "claude-haiku-4-5"),
+            ("tester", None),
+        ]
+    finally:
+        set_team(original)
+
+
+def test_set_team_accepts_model_aliases():
+    original = get_config()["team"]
+    try:
+        set_team([("developer", "haiku"), ("tester", "sonnet")])
+        assert get_config()["team"] == [("developer", "haiku"), ("tester", "sonnet")]
+    finally:
+        set_team(original)
+
+
+def test_set_team_empty_disables_team_mode():
+    original = get_config()["team"]
+    try:
+        set_team(["developer"])
+        set_team([])
+        assert get_config()["team"] == []
+    finally:
+        set_team(original)
+
+
+def test_set_team_rejects_manager_bare():
+    with pytest.raises(ValueError, match="manager"):
+        set_team(["manager", "developer"])
+
+
+def test_set_team_rejects_manager_tuple():
+    with pytest.raises(ValueError, match="manager"):
+        set_team([("manager", "claude-opus-4-7")])
+
+
+def test_set_team_rejects_unknown_role():
+    with pytest.raises(ValueError, match="unknown"):
+        set_team(["designer"])
+
+
+def test_set_team_rejects_empty_model_string():
+    with pytest.raises(ValueError, match="model"):
+        set_team([("developer", "")])
+
+
+def test_set_team_rejects_bad_tuple_arity():
+    with pytest.raises(ValueError):
+        set_team([("developer", "haiku", "extra")])  # type: ignore[list-item]
+
+
+def test_set_team_rejects_non_list():
+    with pytest.raises(ValueError):
+        set_team("developer")  # type: ignore[arg-type]
+
+
+def test_get_config_team_is_copy():
+    original = get_config()["team"]
+    try:
+        set_team(["developer"])
+        cfg = get_config()
+        cfg["team"].append(("tester", None))
+        assert get_config()["team"] == [("developer", None)]  # mutation didn't leak
+    finally:
+        set_team(original)

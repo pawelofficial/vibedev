@@ -13,6 +13,7 @@ from vibedev.config import (
     get_config,
     set_model,
     set_permissions,
+    set_team,
     set_workspace_root,
 )
 from vibedev.core import prompt
@@ -22,6 +23,7 @@ __all__ = [
     "set_permissions",
     "set_model",
     "set_workspace_root",
+    "set_team",
     "get_config",
 ]
 
