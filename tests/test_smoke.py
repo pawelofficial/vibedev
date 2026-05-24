@@ -7,10 +7,16 @@ import pytest
 import vibedev
 from vibedev.core import (
     _build_developer_prompt,
-    _build_finalizer_prompt,
+    _build_readme_update_prompt,
     _build_tester_prompt,
     _extract_verdict,
     _first_role_model,
+    _load_or_create_team_plan,
+    _mark_plan_task_done,
+    _next_pending_task_index,
+    _parse_team_plan,
+    _record_plan_blocker,
+    _restore_plan_if_changed,
     _supports_coded_team_workflow,
 )
 from vibedev.config import (
@@ -209,17 +215,17 @@ def test_get_config_team_is_copy():
         set_team(original)
 
 
-def test_fallback_manager_prompt_requires_verify_fix_retest_loop():
+def test_fallback_manager_prompt_does_not_own_normal_workflow():
     prompt = build_manager_prompt(
         [("developer", None), ("tester", None)],
         default_model="claude-opus-4-7",
     )
 
-    assert "Do not mark the plan item `[x]`\n   yet." in prompt
-    assert "Only mark the item `[x]` after the tester reports" in prompt
-    assert "After every developer fix,\n   send the changed artifact back to the tester." in prompt
-    assert "Do not\n   signal completion with known failing tests." in prompt
-    assert "Wait for the result, mark the item" not in prompt
+    assert "fallback manager" in prompt
+    assert "Read the plan first" not in prompt
+    assert "Integrate the current prompt" not in prompt
+    assert "Delegate one task at a time" not in prompt
+    assert "Verify before checkoff" not in prompt
 
 
 def test_coded_team_workflow_requires_developer_and_tester():
@@ -259,19 +265,87 @@ def test_tester_prompt_requires_machine_readable_verdict():
     assert "VIBEDEV_VERDICT: FAIL" in prompt
 
 
-def test_coded_workflow_prompts_keep_plan_checkoff_in_finalizer():
+def test_coded_workflow_prompts_leave_plan_to_python():
     developer_prompt = _build_developer_prompt(
         "add /goodbye",
         attempt=1,
         tester_report="",
     )
-    finalizer_prompt = _build_finalizer_prompt(
+    readme_prompt = _build_readme_update_prompt(
         "add /goodbye",
         developer_report="changed app.py",
         tester_report="VIBEDEV_VERDICT: PASS",
-        passed=True,
     )
 
-    assert "Do not mark the changed scope complete yet" in developer_prompt
-    assert "status: passed" in finalizer_prompt
-    assert "Update `.vibedev/plan.md` and `README.md`" in finalizer_prompt
+    assert "Python owns the plan file" in developer_prompt
+    assert "Update `README.md`" in readme_prompt
+    assert "Do not edit\n`.vibedev/plan.md`" in readme_prompt
+
+
+def test_parse_team_plan_extracts_goal_tasks_and_history():
+    plan = _parse_team_plan(
+        """# vibedev plan
+
+## Goal
+Build an app.
+
+## Tasks
+- [x] Existing done task
+- [ ] Existing pending task
+
+## History
+- 2026-05-24 - Request: build an app
+""",
+        fallback_goal="fallback",
+    )
+
+    assert plan.goal == "Build an app."
+    assert [(task.done, task.text) for task in plan.tasks] == [
+        (True, "Existing done task"),
+        (False, "Existing pending task"),
+    ]
+    assert plan.history == ["2026-05-24 - Request: build an app"]
+
+
+def test_load_or_create_team_plan_appends_current_request(tmp_path):
+    plan = _load_or_create_team_plan(tmp_path, "add /goodbye")
+    plan_path = tmp_path / ".vibedev" / "plan.md"
+
+    assert plan.goal == "add /goodbye"
+    assert [(task.done, task.text) for task in plan.tasks] == [(False, "add /goodbye")]
+    assert _next_pending_task_index(plan) == 0
+    assert "- [ ] add /goodbye" in plan_path.read_text(encoding="utf-8")
+
+    loaded_again = _load_or_create_team_plan(tmp_path, "add /goodbye")
+    assert [task.text for task in loaded_again.tasks] == ["add /goodbye"]
+
+
+def test_mark_done_and_record_blocker_update_plan_file(tmp_path):
+    plan = _load_or_create_team_plan(tmp_path, "add /goodbye")
+    _mark_plan_task_done(tmp_path, plan, 0)
+
+    plan_text = (tmp_path / ".vibedev" / "plan.md").read_text(encoding="utf-8")
+    assert "- [x] add /goodbye" in plan_text
+    assert "Completed: add /goodbye" in plan_text
+
+    plan = _load_or_create_team_plan(tmp_path, "add /hello")
+    pending = _next_pending_task_index(plan)
+    assert pending == 1
+    _record_plan_blocker(tmp_path, plan, pending, "pytest failed because route is missing")
+
+    plan_text = (tmp_path / ".vibedev" / "plan.md").read_text(encoding="utf-8")
+    assert "- [ ] add /hello" in plan_text
+    assert "Blocked: add /hello" in plan_text
+    assert "pytest failed because route is missing" in plan_text
+
+
+def test_restore_plan_if_readme_updater_touches_it(tmp_path):
+    plan = _load_or_create_team_plan(tmp_path, "add /goodbye")
+    _mark_plan_task_done(tmp_path, plan, 0)
+    plan_path = tmp_path / ".vibedev" / "plan.md"
+    expected = plan_path.read_text(encoding="utf-8")
+
+    plan_path.write_text("agent changed this unexpectedly\n", encoding="utf-8")
+    _restore_plan_if_changed(tmp_path, expected)
+
+    assert plan_path.read_text(encoding="utf-8") == expected

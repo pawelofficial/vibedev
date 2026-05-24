@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Any
@@ -22,21 +23,29 @@ from vibedev.roles import (
 from vibedev.workspace import ensure_workspace
 
 MAX_TEAM_FIX_ATTEMPTS = 3
+PLAN_RELATIVE_PATH = Path(".vibedev") / "plan.md"
 
-TEAM_FINALIZER_SYSTEM_PROMPT = """You are the finalizer for a vibedev team run.
+README_UPDATER_SYSTEM_PROMPT = """You update README files after a vibedev team run.
 
-Python code outside the model has already coordinated developer and tester
-agents. Your job is limited to project bookkeeping after that workflow:
+Python code outside the model has already coordinated planning, implementation,
+testing, and plan checkoff. Your only job is to update `README.md` so it
+accurately summarizes the current project and how to run or test it.
 
-- If the tester passed, update `.vibedev/plan.md` so completed work is checked
-  off, append a concise `## History` entry for this run, and update `README.md`
-  with how to run or test the project.
-- If the tester did not pass, do not mark the related task complete. Record a
-  clear blocker in `.vibedev/plan.md` with the failing command/error so the
-  next run can resume.
-
-Do not implement feature code in this finalizer step.
+Do not edit `.vibedev/plan.md`. Do not implement feature code.
 """
+
+
+@dataclass
+class _PlanTask:
+    done: bool
+    text: str
+
+
+@dataclass
+class _TeamPlan:
+    goal: str
+    tasks: list[_PlanTask]
+    history: list[str]
 
 
 def prompt(
@@ -158,6 +167,12 @@ async def _run_coded_team_workflow(
     assert developer_model is not None
     assert tester_model is not None
 
+    plan = _load_or_create_team_plan(workspace, user_prompt)
+    task_index = _next_pending_task_index(plan)
+    if task_index is None:
+        return
+    task = plan.tasks[task_index].text
+
     developer_options = _options_for_role(
         workspace,
         cfg,
@@ -170,29 +185,29 @@ async def _run_coded_team_workflow(
         model=tester_model,
         system_prompt=TESTER_PROMPT,
     )
-    finalizer_options = _options_for_role(
+    readme_options = _options_for_role(
         workspace,
         cfg,
         model=cfg["model"],
-        system_prompt=TEAM_FINALIZER_SYSTEM_PROMPT,
+        system_prompt=README_UPDATER_SYSTEM_PROMPT,
     )
 
     tester_report = ""
     developer_report = ""
     for attempt in range(1, MAX_TEAM_FIX_ATTEMPTS + 1):
-        label = f"developer attempt {attempt}"
+        label = f"developer attempt {attempt}: {task}"
         _announce_stage(label, logger, quiet)
         developer_report = await _run_query(
-            _build_developer_prompt(user_prompt, attempt, tester_report),
+            _build_developer_prompt(task, attempt, tester_report),
             developer_options,
             logger,
             quiet,
         )
 
-        label = f"tester attempt {attempt}"
+        label = f"tester attempt {attempt}: {task}"
         _announce_stage(label, logger, quiet)
         tester_report = await _run_query(
-            _build_tester_prompt(user_prompt, attempt, developer_report),
+            _build_tester_prompt(task, attempt, developer_report),
             tester_options,
             logger,
             quiet,
@@ -200,18 +215,16 @@ async def _run_coded_team_workflow(
 
         verdict = _extract_verdict(tester_report)
         if verdict is True:
-            _announce_stage("finalize passed team run", logger, quiet)
+            _mark_plan_task_done(workspace, plan, task_index)
+            plan_text_after_checkoff = _read_plan_text(workspace)
+            _announce_stage("update README after passed team run", logger, quiet)
             await _run_query(
-                _build_finalizer_prompt(
-                    user_prompt,
-                    developer_report,
-                    tester_report,
-                    passed=True,
-                ),
-                finalizer_options,
+                _build_readme_update_prompt(task, developer_report, tester_report),
+                readme_options,
                 logger,
                 quiet,
             )
+            _restore_plan_if_changed(workspace, plan_text_after_checkoff)
             return
 
         if verdict is None:
@@ -221,18 +234,7 @@ async def _run_coded_team_workflow(
                 f"{tester_report}"
             )
 
-    _announce_stage("record unresolved team blocker", logger, quiet)
-    await _run_query(
-        _build_finalizer_prompt(
-            user_prompt,
-            developer_report,
-            tester_report,
-            passed=False,
-        ),
-        finalizer_options,
-        logger,
-        quiet,
-    )
+    _record_plan_blocker(workspace, plan, task_index, tester_report)
     raise RuntimeError(
         "vibedev team workflow stopped with failing or inconclusive tests "
         f"after {MAX_TEAM_FIX_ATTEMPTS} attempt(s)"
@@ -301,24 +303,157 @@ def _announce_stage(label: str, logger: "_TranscriptLogger", quiet: bool) -> Non
         print(f"[vibedev] {label}", file=sys.stderr, flush=True)
 
 
-def _build_developer_prompt(user_prompt: str, attempt: int, tester_report: str) -> str:
+def _load_or_create_team_plan(workspace: Path, user_prompt: str) -> _TeamPlan:
+    path = workspace / PLAN_RELATIVE_PATH
+    if path.exists():
+        plan = _parse_team_plan(path.read_text(encoding="utf-8"), user_prompt)
+    else:
+        plan = _TeamPlan(goal=_one_line(user_prompt), tasks=[], history=[])
+
+    _ensure_plan_has_task(plan, user_prompt)
+    plan.history.append(f"{_today()} - Request: {_one_line(user_prompt)}")
+    _write_team_plan(workspace, plan)
+    return plan
+
+
+def _parse_team_plan(text: str, fallback_goal: str) -> _TeamPlan:
+    section = ""
+    goal_lines: list[str] = []
+    tasks: list[_PlanTask] = []
+    history: list[str] = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped == "## Goal":
+            section = "goal"
+            continue
+        if stripped == "## Tasks":
+            section = "tasks"
+            continue
+        if stripped == "## History":
+            section = "history"
+            continue
+        if stripped.startswith("## "):
+            section = ""
+            continue
+
+        if section == "goal" and stripped:
+            goal_lines.append(stripped)
+        elif section == "tasks":
+            task = _parse_task_line(stripped)
+            if task is not None:
+                tasks.append(task)
+        elif section == "history" and stripped.startswith("- "):
+            history.append(stripped[2:].strip())
+
+    goal = " ".join(goal_lines).strip() or _one_line(fallback_goal)
+    return _TeamPlan(goal=goal, tasks=tasks, history=history)
+
+
+def _parse_task_line(line: str) -> _PlanTask | None:
+    if line.startswith("- [x] "):
+        return _PlanTask(done=True, text=line[6:].strip())
+    if line.startswith("- [X] "):
+        return _PlanTask(done=True, text=line[6:].strip())
+    if line.startswith("- [ ] "):
+        return _PlanTask(done=False, text=line[6:].strip())
+    return None
+
+
+def _ensure_plan_has_task(plan: _TeamPlan, user_prompt: str) -> None:
+    task_text = _one_line(user_prompt)
+    if not task_text:
+        return
+    existing = {_normalize_task(task.text) for task in plan.tasks}
+    if _normalize_task(task_text) not in existing:
+        plan.tasks.append(_PlanTask(done=False, text=task_text))
+
+
+def _next_pending_task_index(plan: _TeamPlan) -> int | None:
+    for index, task in enumerate(plan.tasks):
+        if not task.done:
+            return index
+    return None
+
+
+def _mark_plan_task_done(workspace: Path, plan: _TeamPlan, task_index: int) -> None:
+    plan.tasks[task_index].done = True
+    plan.history.append(f"{_today()} - Completed: {plan.tasks[task_index].text}")
+    _write_team_plan(workspace, plan)
+
+
+def _record_plan_blocker(
+    workspace: Path,
+    plan: _TeamPlan,
+    task_index: int,
+    tester_report: str,
+) -> None:
+    plan.tasks[task_index].done = False
+    summary = _one_line(tester_report)[:500] or "tester did not report a passing verdict"
+    plan.history.append(
+        f"{_today()} - Blocked: {plan.tasks[task_index].text} ({summary})"
+    )
+    _write_team_plan(workspace, plan)
+
+
+def _write_team_plan(workspace: Path, plan: _TeamPlan) -> None:
+    path = workspace / PLAN_RELATIVE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = [
+        "# vibedev plan",
+        "",
+        "## Goal",
+        plan.goal.strip(),
+        "",
+        "## Tasks",
+    ]
+    for task in plan.tasks:
+        marker = "x" if task.done else " "
+        lines.append(f"- [{marker}] {task.text}")
+    lines.extend(["", "## History"])
+    for entry in plan.history:
+        lines.append(f"- {entry}")
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _read_plan_text(workspace: Path) -> str:
+    return (workspace / PLAN_RELATIVE_PATH).read_text(encoding="utf-8")
+
+
+def _restore_plan_if_changed(workspace: Path, expected_text: str) -> None:
+    path = workspace / PLAN_RELATIVE_PATH
+    if path.read_text(encoding="utf-8") != expected_text:
+        path.write_text(expected_text, encoding="utf-8")
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _one_line(text: str) -> str:
+    return " ".join(text.split()).strip()
+
+
+def _normalize_task(text: str) -> str:
+    return _one_line(text).casefold()
+
+
+def _build_developer_prompt(task: str, attempt: int, tester_report: str) -> str:
     if attempt == 1:
-        return f"""User request:
-{user_prompt}
+        return f"""Task:
+{task}
 
-Implement the requested change inside the current workspace.
-
-Before editing, read `.vibedev/plan.md` if it exists and reconcile it with the
-current files. If new work is needed, make sure the plan contains pending
-items for it. Do not mark the changed scope complete yet; Python will send
-your work to the tester first.
+Implement this task inside the current workspace. Python owns the plan file and
+will send your work to the tester before marking anything complete.
 
 When you finish, report the files changed, commands run, and what the tester
 should verify.
 """
 
-    return f"""User request:
-{user_prompt}
+    return f"""Task:
+{task}
 
 The tester found failures in the previous attempt. Fix the implementation
 without weakening the requested behavior or deleting useful tests.
@@ -331,9 +466,9 @@ should re-run.
 """
 
 
-def _build_tester_prompt(user_prompt: str, attempt: int, developer_report: str) -> str:
-    return f"""User request:
-{user_prompt}
+def _build_tester_prompt(task: str, attempt: int, developer_report: str) -> str:
+    return f"""Task:
+{task}
 
 Developer attempt: {attempt}
 
@@ -351,18 +486,13 @@ VIBEDEV_VERDICT: FAIL
 """
 
 
-def _build_finalizer_prompt(
-    user_prompt: str,
+def _build_readme_update_prompt(
+    task: str,
     developer_report: str,
     tester_report: str,
-    *,
-    passed: bool,
 ) -> str:
-    status = "passed" if passed else "failed"
-    return f"""User request:
-{user_prompt}
-
-The coded vibedev team workflow has finished with status: {status}.
+    return f"""Completed task:
+{task}
 
 Developer report:
 {developer_report}
@@ -370,8 +500,8 @@ Developer report:
 Tester report:
 {tester_report}
 
-Update `.vibedev/plan.md` and `README.md` according to your finalizer system
-instructions.
+Update `README.md` according to your system instructions. Do not edit
+`.vibedev/plan.md`.
 """
 
 

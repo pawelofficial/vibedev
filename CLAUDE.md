@@ -66,10 +66,11 @@ the workspace, so the caller can open / inspect the generated code afterwards.
 
 `set_team([...])` opts into a multi-agent run. Pass a list of **role** names
 (currently `"developer"` and `"tester"`). When both roles are configured,
-Python owns the lifecycle: run developer, run tester, parse the tester's
-`VIBEDEV_VERDICT`, send failures back to the developer, and only finalize
-after tester pass. This is deliberately code-owned control flow rather than
-a manager-prompt convention.
+Python owns the lifecycle: read/create `.vibedev/plan.md`, append the current
+request as a pending task when needed, pick the next `[ ]` task, run developer,
+run tester, parse the tester's `VIBEDEV_VERDICT`, send failures back to the
+developer, and mark `[x]` only after tester pass. This is deliberately
+code-owned control flow rather than a manager-prompt convention.
 
 The SDK-native manager prompt still exists as a fallback for unusual teams
 that do not include both `"developer"` and `"tester"`. The `"manager"` role
@@ -87,7 +88,7 @@ main-agent model from `set_model(...)`) or a `(role, model)` tuple that
 overrides just that instance. The forms mix freely:
 
 ```python
-vibedev.set_model("claude-opus-4-7")    # finalizer / fallback manager model
+vibedev.set_model("claude-opus-4-7")    # README updater / fallback manager model
 vibedev.set_team([
     ("developer", "claude-haiku-4-5"),
     ("developer", "claude-haiku-4-5"),
@@ -165,9 +166,10 @@ The package is intentionally small — six modules under `src/vibedev/`:
   `DEVELOPER_PROMPT` and `TESTER_PROMPT`, the `SUBAGENT_ROLES` dict mapping
   role name → `claude_agent_sdk.AgentDefinition` *templates* (model=None),
   and fallback manager helpers (`build_manager_prompt` / `subagents_for`) for
-  teams that do not include both developer and tester. The tester prompt must
-  end with `VIBEDEV_VERDICT: PASS` or `VIBEDEV_VERDICT: FAIL`; `core.py`
-  parses that machine-readable line to drive the fix/retest loop.
+  teams that do not include both developer and tester. The normal team prompts
+  do not own plan or task orchestration. The tester prompt must end with
+  `VIBEDEV_VERDICT: PASS` or `VIBEDEV_VERDICT: FAIL`; `core.py` parses that
+  machine-readable line to drive the fix/retest loop.
 - **`core.py`** — `prompt(...)` is the public entry point. It validates the
   user prompt, snapshots config via `get_config()`, resolves the workspace via
   `ensure_workspace(...)`, prepares a transcript log path via
@@ -175,7 +177,9 @@ The package is intentionally small — six modules under `src/vibedev/`:
   uses `anyio.run` to drive the async `_run`. `_run` branches on team shape:
   developer+tester teams use the coded lifecycle in
   `_run_coded_team_workflow`; solo mode uses `ORCHESTRATOR_SYSTEM_PROMPT`;
-  other team shapes use the fallback SDK-native manager prompt. Every
+  other team shapes use the fallback SDK-native manager prompt.
+  `_run_coded_team_workflow` owns plan creation/parsing/writing, task
+  selection, checkoff, blocker recording, and the dev/test retry policy. Every
   `claude_agent_sdk.query(...)` message is fanned out to (a) a
   `_TranscriptLogger` writing to `<workspace>.vibedev-logs/<UTC>.log` (a
   **sibling** of the workspace, deliberately outside it — see "Transcript
@@ -199,24 +203,27 @@ The package is intentionally small — six modules under `src/vibedev/`:
 2. `core.prompt` validates the string is non-empty, snapshots config with
    `get_config()`, resolves workspace via `ensure_workspace(...)`.
 3. `anyio.run(_run, ...)` bridges sync→async.
-4. `_run` constructs `ClaudeAgentOptions` (with the workspace as `cwd` and
-   `ORCHESTRATOR_SYSTEM_PROMPT` as the system prompt) and calls
-   `claude_agent_sdk.query(prompt=user_prompt, options=options)`.
-5. The SDK subprocesses the Claude Code CLI; the CLI runs the agent loop
-   (tool calls, file edits, bash) inside the workspace dir.
-6. The async iterator yields messages back; `_print_message` streams text /
+4. `_run` chooses solo, coded developer+tester team mode, or fallback manager
+   mode based on config.
+5. In coded team mode, Python updates `.vibedev/plan.md`, sends one pending
+   task through developer/tester `query(...)` calls, and updates plan state
+   from the tester verdict.
+6. The SDK subprocesses the Claude Code CLI for each `query(...)`; the CLI
+   runs the agent loop (tool calls, file edits, bash) inside the workspace dir.
+7. The async iterator yields messages back; `_print_message` streams text /
    tool-use markers to stdout.
-7. When the agent signals done, `_run` returns, `anyio.run` unblocks, and
-   `prompt()` returns the workspace `Path`.
+8. When the selected workflow is done, `_run` returns, `anyio.run` unblocks,
+   and `prompt()` returns the workspace `Path`.
 
 ### Multi-agent layering: coded lifecycle, SDK execution
 
 vibedev owns the high-level team lifecycle in Python when both `developer`
-and `tester` are configured. It runs the developer agent, runs the tester
-agent, parses the tester's `VIBEDEV_VERDICT`, sends failures back to the
-developer, and finalizes only after tester pass. The SDK still does the heavy
-agent execution for each role via `query(...)`; vibedev only owns the ordering
-and retry policy.
+and `tester` are configured. It reads/writes `.vibedev/plan.md`, selects the
+next pending task, runs the developer agent, runs the tester agent, parses the
+tester’s `VIBEDEV_VERDICT`, sends failures back to the developer, marks the
+task complete only after tester pass, and records blockers on repeated failure.
+The SDK still does the heavy agent execution for each role via `query(...)`;
+vibedev owns the ordering, retry policy, and plan state transitions.
 
 The SDK-native manager/Task-tool path remains as a fallback for unusual team
 shapes, but the normal developer+tester path should not rely on a prompt to
@@ -233,19 +240,20 @@ models *are* supported via the `(role, model)` tuple form of `set_team`
 Because the workspace is reused as-is across runs (no timestamp nesting), a
 second `vibedev.prompt(...)` call against the same workspace can pick up
 where the previous one left off — *if* there's enough state on disk to
-reconstruct progress. The solo orchestrator prompt, fallback manager prompt,
-and coded team finalizer all use `.vibedev/plan.md` (under the workspace) as
-a checklist of atomic tasks.
+reconstruct progress. In normal developer+tester team mode, Python owns
+`.vibedev/plan.md` (under the workspace) as a checklist of atomic tasks. Solo
+mode still uses the solo orchestrator prompt for this behavior.
 
 The contract:
 
-- **First run**: agent decomposes the user prompt into a `## Tasks` list of
-  `[ ]` items in `.vibedev/plan.md` and works through them, flipping each
-  to `[x]` as it completes.
-- **Subsequent runs**: agent reads the plan, reconciles `[x]` items against
-  the actual workspace state (flipping any item back to `[ ]` if its code
-  is missing or broken), appends new `[ ]` items for any work the current
-  prompt introduces, and resumes from the top `[ ]`.
+- **First team run**: Python creates `.vibedev/plan.md` with one pending task
+  for the current user prompt.
+- **Subsequent team runs**: Python parses the plan, appends the current prompt
+  as a new pending task if it is not already listed, and resumes from the top
+  `[ ]`.
+- **Team checkoff**: Python flips a task to `[x]` only after the tester returns
+  `VIBEDEV_VERDICT: PASS`; repeated failures leave the task `[ ]` and append a
+  blocker to `## History`.
 - **Plan modification by the user**: the user can edit `.vibedev/plan.md`
   directly (the solo orchestrator prompt also accepts plan-modification
   requests phrased in natural language, e.g. "drop the Docker step").
@@ -254,13 +262,10 @@ The contract:
   the generated code.
 - **Never delete the plan on success**: it documents history across runs.
 
-This is **prompt-layer behavior only** — vibedev itself does not parse,
-validate, or even read the plan file. If you change the file path, the
-format, or the reconciliation rules, the source of truth is in
-`prompts.py` and the `_MANAGER_BASE` template in `roles.py`. The two
-prompts duplicate the format spec deliberately: they're independent
-agents and the cost of one prompt drifting away from the other is low
-(only one runs per `vibedev.prompt(...)` call).
+For normal team mode this is **code-layer behavior** in `core.py`. If you
+change the file path, format, parser, or checkoff rules, update the plan helper
+functions and tests in `tests/test_smoke.py`. Solo mode remains prompt-layer
+behavior in `prompts.py`.
 
 A killed-mid-task run leaves the workspace partially mutated; the
 reconciliation step on the next run is best-effort, not transactional.
