@@ -67,24 +67,27 @@ The coded flow is:
 1. Load or create `.vibedev/plan.md`.
 2. Append the current user prompt as a pending task if it is not already in the
    plan.
-3. If `business_analyst` exists, run it against the user request and current
-   plan.
-4. Parse the analyst's `## Proposed Tasks` section and append missing tasks to
+3. Write `.vibedev/common_knowledge.md` with shared workspace context.
+4. If `business_analyst` exists, run it against the user request, current
+   plan, and a pointer to the common knowledge file.
+5. Parse the analyst's `## Proposed Tasks` section and append missing tasks to
    the Python-owned plan.
-5. Pass the analyst brief to developer and tester as acceptance context.
-6. Select the first pending task.
-7. Run the developer agent on that task.
-8. Run the tester agent on the developer report.
-9. Parse the tester's verdict line:
+6. Refresh common knowledge after analyst plan changes.
+7. Pass the common knowledge path/purpose and the analyst brief to developer
+   and tester as context.
+8. Select the first pending task.
+9. Run the developer agent on that task.
+10. Run the tester agent on the developer report.
+11. Parse the tester's verdict line:
    - `VIBEDEV_VERDICT: PASS`
    - `VIBEDEV_VERDICT: FAIL`
-10. On pass, mark the task done in the plan.
-11. On fail or missing verdict, feed the tester report back to the developer and
+12. On pass, mark the task done in the plan.
+13. On fail or missing verdict, feed the tester report back to the developer and
    retry.
-12. After `MAX_TEAM_FIX_ATTEMPTS`, leave the task pending and record a blocker
+14. After `MAX_TEAM_FIX_ATTEMPTS`, leave the task pending and record a blocker
    in plan history.
-13. After pass, run a README updater agent.
-14. Restore `.vibedev/plan.md` if the README updater agent edits it.
+15. After pass, run a README updater agent with the common knowledge pointer.
+16. Restore `.vibedev/plan.md` if the README updater agent edits it.
 
 The business analyst, developer, and tester prompts in `roles.py` describe role
 behavior only. They do not own plan lifecycle, task selection, checkoff, retry
@@ -101,6 +104,31 @@ The analyst does not edit files. It returns structured Markdown with:
 
 Python parses only `## Proposed Tasks` for plan changes. The full analyst brief
 is passed into developer and tester prompts as acceptance context.
+
+## Common Knowledge
+
+Normal team mode writes:
+
+```text
+<workspace>/.vibedev/common_knowledge.md
+```
+
+This file is a generated shared context artifact for every role in the coded
+team workflow. It includes:
+
+- project goal and current request
+- important paths such as the plan, common knowledge file, and README
+- current plan tasks
+- recent plan history
+- discovered docs
+- discovered tests
+- notable project files
+- team workflow rules
+
+Python injects the common knowledge path and purpose into business analyst,
+developer, tester, and README-updater prompts. It does not inject the full file
+contents. Agents can decide when they need to read it, which keeps prompts
+small and makes the file itself the source of shared context.
 
 ## Fallback Manager Mode
 

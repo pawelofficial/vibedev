@@ -25,6 +25,7 @@ from vibedev.workspace import ensure_workspace
 
 MAX_TEAM_FIX_ATTEMPTS = 3
 PLAN_RELATIVE_PATH = Path(".vibedev") / "plan.md"
+COMMON_KNOWLEDGE_RELATIVE_PATH = Path(".vibedev") / "common_knowledge.md"
 
 README_UPDATER_SYSTEM_PROMPT = """You update README files after a vibedev team run.
 
@@ -170,6 +171,7 @@ async def _run_coded_team_workflow(
     assert tester_model is not None
 
     plan = _load_or_create_team_plan(workspace, user_prompt)
+    common_knowledge = _write_common_knowledge(workspace, user_prompt, plan)
     analyst_brief = ""
     if analyst_model is not None:
         analyst_options = _options_for_role(
@@ -180,12 +182,13 @@ async def _run_coded_team_workflow(
         )
         _announce_stage("business analyst plan review", logger, quiet)
         analyst_brief = await _run_query(
-            _build_business_analyst_prompt(user_prompt, plan),
+            _build_business_analyst_prompt(user_prompt, plan, common_knowledge),
             analyst_options,
             logger,
             quiet,
         )
         _apply_analyst_review(workspace, plan, analyst_brief)
+        common_knowledge = _write_common_knowledge(workspace, user_prompt, plan)
 
     task_index = _next_pending_task_index(plan)
     if task_index is None:
@@ -217,7 +220,13 @@ async def _run_coded_team_workflow(
         label = f"developer attempt {attempt}: {task}"
         _announce_stage(label, logger, quiet)
         developer_report = await _run_query(
-            _build_developer_prompt(task, attempt, tester_report, analyst_brief),
+            _build_developer_prompt(
+                task,
+                attempt,
+                tester_report,
+                analyst_brief,
+                common_knowledge,
+            ),
             developer_options,
             logger,
             quiet,
@@ -226,7 +235,13 @@ async def _run_coded_team_workflow(
         label = f"tester attempt {attempt}: {task}"
         _announce_stage(label, logger, quiet)
         tester_report = await _run_query(
-            _build_tester_prompt(task, attempt, developer_report, analyst_brief),
+            _build_tester_prompt(
+                task,
+                attempt,
+                developer_report,
+                analyst_brief,
+                common_knowledge,
+            ),
             tester_options,
             logger,
             quiet,
@@ -238,12 +253,18 @@ async def _run_coded_team_workflow(
             plan_text_after_checkoff = _read_plan_text(workspace)
             _announce_stage("update README after passed team run", logger, quiet)
             await _run_query(
-                _build_readme_update_prompt(task, developer_report, tester_report),
+                _build_readme_update_prompt(
+                    task,
+                    developer_report,
+                    tester_report,
+                    common_knowledge,
+                ),
                 readme_options,
                 logger,
                 quiet,
             )
             _restore_plan_if_changed(workspace, plan_text_after_checkoff)
+            _write_common_knowledge(workspace, user_prompt, plan)
             return
 
         if verdict is None:
@@ -322,10 +343,15 @@ def _announce_stage(label: str, logger: "_TranscriptLogger", quiet: bool) -> Non
         print(f"[vibedev] {label}", file=sys.stderr, flush=True)
 
 
-def _build_business_analyst_prompt(user_prompt: str, plan: _TeamPlan) -> str:
+def _build_business_analyst_prompt(
+    user_prompt: str,
+    plan: _TeamPlan,
+    common_knowledge: str = "",
+) -> str:
     return f"""User request:
 {user_prompt}
 
+{_common_knowledge_context_section(common_knowledge)}
 Current Python-owned plan:
 {_render_plan_for_prompt(plan)}
 
@@ -405,6 +431,128 @@ def _task_text_from_markdown_bullet(line: str) -> str | None:
             text = line[len(prefix) :].strip()
             return text or None
     return None
+
+
+def _write_common_knowledge(workspace: Path, user_prompt: str, plan: _TeamPlan) -> str:
+    path = workspace / COMMON_KNOWLEDGE_RELATIVE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = _build_common_knowledge(workspace, user_prompt, plan)
+    path.write_text(content, encoding="utf-8")
+    return content
+
+
+def _build_common_knowledge(workspace: Path, user_prompt: str, plan: _TeamPlan) -> str:
+    docs = _workspace_files_matching(
+        workspace,
+        lambda path: path.suffix.lower() == ".md" or path.name.lower() == "readme",
+    )
+    tests = _workspace_files_matching(
+        workspace,
+        lambda path: (
+            "test" in path.name.lower()
+            or any(part.lower() in {"test", "tests"} for part in path.parts)
+        ),
+    )
+    notable = _workspace_files_matching(
+        workspace,
+        lambda path: path.suffix.lower() in {".py", ".js", ".ts", ".tsx", ".html", ".css", ".sql", ".txt"},
+        limit=30,
+    )
+
+    lines = [
+        "# Common Knowledge",
+        "",
+        "This file is generated by vibedev for agents working in this workspace.",
+        "It captures shared project context; Python owns workflow state in the plan.",
+        "",
+        "## Project Goal",
+        plan.goal or _one_line(user_prompt),
+        "",
+        "## Current Request",
+        _one_line(user_prompt),
+        "",
+        "## Important Paths",
+        f"- Plan: `{PLAN_RELATIVE_PATH.as_posix()}`",
+        f"- Common knowledge: `{COMMON_KNOWLEDGE_RELATIVE_PATH.as_posix()}`",
+        "- README: `README.md`",
+        "",
+        "## Current Plan",
+    ]
+    for task in plan.tasks:
+        marker = "x" if task.done else " "
+        lines.append(f"- [{marker}] {task.text}")
+
+    lines.extend(["", "## Recent Plan History"])
+    if plan.history:
+        lines.extend(f"- {entry}" for entry in plan.history[-8:])
+    else:
+        lines.append("- No history yet.")
+
+    lines.extend(["", "## Known Documentation"])
+    lines.extend(_markdown_path_list(docs))
+
+    lines.extend(["", "## Known Tests"])
+    lines.extend(_markdown_path_list(tests))
+
+    lines.extend(["", "## Notable Project Files"])
+    lines.extend(_markdown_path_list(notable))
+
+    lines.extend(
+        [
+            "",
+            "## Team Workflow",
+            "- Python owns plan parsing, task selection, checkoff, and blocker recording.",
+            "- Business analyst reviews the plan and proposes tasks but does not edit files.",
+            "- Developer implements one selected task at a time.",
+            "- Tester verifies the task and must emit `VIBEDEV_VERDICT: PASS` or `FAIL`.",
+            "- Python marks a task `[x]` only after tester pass.",
+            "",
+            "## Agent Notes",
+            "- Read this file before making assumptions about the workspace.",
+            "- Prefer existing project commands, tests, and docs listed above.",
+            "- Do not edit `.vibedev/plan.md`; Python owns it.",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _workspace_files_matching(
+    workspace: Path,
+    predicate: Any,
+    *,
+    limit: int = 20,
+) -> list[str]:
+    matches: list[str] = []
+    for path in sorted(workspace.rglob("*")):
+        if len(matches) >= limit:
+            break
+        if not path.is_file() or _is_ignored_common_knowledge_path(path, workspace):
+            continue
+        rel_path = path.relative_to(workspace)
+        if predicate(rel_path):
+            matches.append(rel_path.as_posix())
+    return matches
+
+
+def _is_ignored_common_knowledge_path(path: Path, workspace: Path) -> bool:
+    rel_parts = path.relative_to(workspace).parts
+    ignored = {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+        "venv",
+    }
+    return any(part in ignored for part in rel_parts)
+
+
+def _markdown_path_list(paths: list[str]) -> list[str]:
+    if not paths:
+        return ["- None discovered yet."]
+    return [f"- `{path}`" for path in paths]
 
 
 def _load_or_create_team_plan(workspace: Path, user_prompt: str) -> _TeamPlan:
@@ -551,11 +699,14 @@ def _build_developer_prompt(
     attempt: int,
     tester_report: str,
     analyst_brief: str = "",
+    common_knowledge: str = "",
 ) -> str:
+    common_knowledge_section = _common_knowledge_context_section(common_knowledge)
     analyst_section = _analyst_context_section(analyst_brief)
     if attempt == 1:
         return f"""Task:
 {task}
+{common_knowledge_section}
 {analyst_section}
 
 Implement this task inside the current workspace. Python owns the plan file and
@@ -567,6 +718,7 @@ should verify.
 
     return f"""Task:
 {task}
+{common_knowledge_section}
 {analyst_section}
 
 The tester found failures in the previous attempt. Fix the implementation
@@ -585,10 +737,13 @@ def _build_tester_prompt(
     attempt: int,
     developer_report: str,
     analyst_brief: str = "",
+    common_knowledge: str = "",
 ) -> str:
+    common_knowledge_section = _common_knowledge_context_section(common_knowledge)
     analyst_section = _analyst_context_section(analyst_brief)
     return f"""Task:
 {task}
+{common_knowledge_section}
 {analyst_section}
 
 Developer attempt: {attempt}
@@ -617,13 +772,29 @@ Business analyst brief and acceptance criteria:
 """
 
 
+def _common_knowledge_context_section(common_knowledge: str) -> str:
+    if not common_knowledge.strip():
+        return ""
+    return f"""
+
+Shared project context:
+- `{COMMON_KNOWLEDGE_RELATIVE_PATH.as_posix()}` contains project overview,
+  current plan summary, docs/tests locations, notable files, and workflow rules.
+- Read it when you need project structure, existing behavior, docs/tests paths,
+  or shared context before making assumptions.
+"""
+
+
 def _build_readme_update_prompt(
     task: str,
     developer_report: str,
     tester_report: str,
+    common_knowledge: str = "",
 ) -> str:
     return f"""Completed task:
 {task}
+
+{_common_knowledge_context_section(common_knowledge)}
 
 Developer report:
 {developer_report}

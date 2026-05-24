@@ -8,6 +8,7 @@ import vibedev
 from vibedev.core import (
     _apply_analyst_review,
     _build_business_analyst_prompt,
+    _build_common_knowledge,
     _build_developer_prompt,
     _build_readme_update_prompt,
     _build_tester_prompt,
@@ -21,6 +22,7 @@ from vibedev.core import (
     _record_plan_blocker,
     _restore_plan_if_changed,
     _supports_coded_team_workflow,
+    _write_common_knowledge,
 )
 from vibedev.config import (
     get_config,
@@ -283,21 +285,38 @@ def test_tester_prompt_requires_machine_readable_verdict():
 
 
 def test_coded_workflow_prompts_leave_plan_to_python():
+    common_knowledge = "# Common Knowledge\n- Tests: `tests/test_app.py`"
     developer_prompt = _build_developer_prompt(
         "add /goodbye",
         attempt=1,
         tester_report="",
         analyst_brief="## Acceptance Criteria\n- The /goodbye route returns JSON.",
+        common_knowledge=common_knowledge,
+    )
+    tester_prompt = _build_tester_prompt(
+        "add /goodbye",
+        attempt=1,
+        developer_report="changed app.py",
+        analyst_brief="## Acceptance Criteria\n- The /goodbye route returns JSON.",
+        common_knowledge=common_knowledge,
     )
     readme_prompt = _build_readme_update_prompt(
         "add /goodbye",
         developer_report="changed app.py",
         tester_report="VIBEDEV_VERDICT: PASS",
+        common_knowledge=common_knowledge,
     )
 
     assert "Python owns the plan file" in developer_prompt
+    assert "Shared project context:" in developer_prompt
+    assert "`.vibedev/common_knowledge.md`" in developer_prompt
+    assert "`tests/test_app.py`" not in developer_prompt
+    assert "# Common Knowledge" not in developer_prompt
+    assert "Shared project context:" in tester_prompt
     assert "Business analyst brief and acceptance criteria" in developer_prompt
     assert "The /goodbye route returns JSON." in developer_prompt
+    assert "The /goodbye route returns JSON." in tester_prompt
+    assert "Shared project context:" in readme_prompt
     assert "Update `README.md`" in readme_prompt
     assert "Do not edit\n`.vibedev/plan.md`" in readme_prompt
 
@@ -318,8 +337,15 @@ Build an app.
         fallback_goal="fallback",
     )
 
-    prompt = _build_business_analyst_prompt("build an app", plan)
+    prompt = _build_business_analyst_prompt(
+        "build an app",
+        plan,
+        common_knowledge="# Common Knowledge\nShared docs live in README.md",
+    )
 
+    assert "Shared project context:" in prompt
+    assert "`.vibedev/common_knowledge.md`" in prompt
+    assert "Shared docs live in README.md" not in prompt
     assert "Current Python-owned plan:" in prompt
     assert "- [ ] Build the first feature" in prompt
     assert "## Proposed Tasks" in prompt
@@ -373,6 +399,34 @@ def test_apply_analyst_review_appends_missing_tasks(tmp_path):
     assert "- [ ] Add lineage graph search" in plan_text
     assert [task.text for task in updated_plan.tasks].count("build lineage app") == 1
     assert "Analyst review:" in plan_text
+
+
+def test_build_common_knowledge_discovers_docs_tests_and_files(tmp_path):
+    (tmp_path / "README.md").write_text("# Demo app\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_app.py").write_text("def test_ok(): pass\n", encoding="utf-8")
+    plan = _load_or_create_team_plan(tmp_path, "build demo app")
+
+    common_knowledge = _build_common_knowledge(tmp_path, "build demo app", plan)
+
+    assert "# Common Knowledge" in common_knowledge
+    assert "build demo app" in common_knowledge
+    assert "`README.md`" in common_knowledge
+    assert "`tests/test_app.py`" in common_knowledge
+    assert "`app.py`" in common_knowledge
+    assert "` .vibedev/plan.md`" not in common_knowledge
+
+
+def test_write_common_knowledge_creates_workspace_file(tmp_path):
+    plan = _load_or_create_team_plan(tmp_path, "build demo app")
+    content = _write_common_knowledge(tmp_path, "build demo app", plan)
+    path = tmp_path / ".vibedev" / "common_knowledge.md"
+
+    assert path.read_text(encoding="utf-8") == content
+    assert "## Team Workflow" in content
+    assert "Python owns plan parsing" in content
 
 
 def test_parse_team_plan_extracts_goal_tasks_and_history():
