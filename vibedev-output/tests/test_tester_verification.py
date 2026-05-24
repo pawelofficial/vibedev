@@ -445,3 +445,68 @@ class TestUIStructure:
         resp = self.client.get("/static/app.js")
         assert b"/api/graph" in resp.data
         assert b"focusMart" in resp.data
+
+
+# ------------------------------------------------------------------
+# 8. Drag-to-reposition infrastructure checks
+# ------------------------------------------------------------------
+class TestDragInfrastructure:
+    """Verify the drag-to-reposition feature infrastructure is present."""
+
+    @classmethod
+    def setup_class(cls):
+        from app import app
+        app.config["TESTING"] = True
+        cls.client = app.test_client()
+        cls.js_content = cls.client.get("/static/app.js").data.decode("utf-8")
+        cls.css_content = cls.client.get("/static/style.css").data.decode("utf-8")
+
+    def test_pointer_event_listeners_on_nodes(self):
+        """app.js should register pointerdown/pointermove/pointerup on node groups."""
+        assert "pointerdown" in self.js_content
+        assert "pointermove" in self.js_content
+        assert "pointerup" in self.js_content
+
+    def test_setup_node_drag_function_exists(self):
+        """app.js should define the setupNodeDrag function."""
+        assert "setupNodeDrag" in self.js_content
+
+    def test_update_connected_edges_function_exists(self):
+        """app.js should define the updateConnectedEdges function for surgical edge updates."""
+        assert "updateConnectedEdges" in self.js_content
+
+    def test_drag_threshold_defined(self):
+        """app.js should define a movement threshold to disambiguate click from drag."""
+        assert "NODE_DRAG_THRESHOLD" in self.js_content
+
+    def test_session_storage_persistence(self):
+        """app.js should use sessionStorage for position persistence."""
+        assert "sessionStorage" in self.js_content
+        assert "vibedev-lineage-positions" in self.js_content
+
+    def test_save_and_load_position_functions(self):
+        """app.js should define save/load/clear position helpers."""
+        assert "savePositionsToSession" in self.js_content
+        assert "loadPositionsFromSession" in self.js_content
+        assert "clearPositionsFromSession" in self.js_content
+
+    def test_cursor_grab_in_css(self):
+        """style.css should define cursor: grab for .model-node."""
+        assert "cursor: grab" in self.css_content
+
+    def test_cursor_grabbing_in_css(self):
+        """style.css should define cursor: grabbing for active drag state."""
+        assert "cursor: grabbing" in self.css_content
+
+    def test_pointer_capture_used(self):
+        """app.js should use setPointerCapture for reliable drag tracking."""
+        assert "setPointerCapture" in self.js_content
+        assert "releasePointerCapture" in self.js_content
+
+    def test_handle_node_click_function_exists(self):
+        """app.js should define handleNodeClick to disambiguate click targets."""
+        assert "handleNodeClick" in self.js_content
+
+    def test_reset_view_clears_positions(self):
+        """resetView should call clearPositionsFromSession."""
+        assert "clearPositionsFromSession" in self.js_content

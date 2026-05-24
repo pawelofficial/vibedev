@@ -16,18 +16,73 @@ Users should be able to drag and reposition the boxes/nodes that represent SQL t
 
 ## Current Plan
 - [x] Build a column-lineage web app for the SQL models in schema.txt.
-- [ ] Users should be able to drag and reposition the boxes/nodes that represent SQL tables and views in the lineage graph.
+- [x] Users should be able to drag and reposition the boxes/nodes that represent SQL tables and views in the lineage graph.
+- [ ] Add node-level drag handlers to `renderNodes()` in `static/app.js` using PointerEvents, with a 4px movement threshold to disambiguate click from drag.
+- [ ] Implement connected-edge re-rendering on drag: on each `pointermove` during a node drag, recompute and update only the SVG `<path>` elements whose `data-source-model` or `data-target-model` matches the dragged node.
+- [ ] Add `cursor: grab` / `cursor: grabbing` CSS rules for `.model-node` elements during hover and active drag states.
+- [ ] Persist dragged positions to `sessionStorage` (keyed by node ID); restore them in `layoutGraph()` if present, so positions survive in-page navigation and soft refreshes within the session.
+- [ ] Ensure the existing "Reset View" button also clears stored positions from `sessionStorage` and re-runs `layoutGraph()` to return nodes to their default positions.
+- [ ] Raise dragged node to top z-order (re-append the `<g>` element to its parent) during drag to avoid overlap confusion.
+- [ ] Add Python/pytest structural tests verifying: (a) the `app.js` source contains pointer event listeners on node groups, (b) the `style.css` contains `cursor: grab` for `.model-node`, (c) the Flask-served HTML includes `app.js` with drag-rel...
+- [ ] Update `README.md` to document the new drag-to-reposition behavior under the Features section and note session-scoped persistence.
 
 ## Recent Plan History
 - 2026-05-24 - Request: Build a column-lineage web app for the SQL models in schema.txt.
 - 2026-05-24 - Completed: Build a column-lineage web app for the SQL models in schema.txt.
 - 2026-05-24 - Request: Users should be able to drag and reposition the boxes/nodes that represent SQL tables and views in the lineage graph.
+- 2026-05-24 - Request: Users should be able to drag and reposition the boxes/nodes that represent SQL tables and views in the lineage graph.
+- 2026-05-24 - Analyst review: ## Missing Requirements - **Click vs. drag disambiguation**: The title `<text>` element already has a `click` handler for `selectModel` and column texts have `click` for `selectColumn`. The plan does not specify how to distinguish a click (selection) from a drag (reposition). A movement-th...
+- 2026-05-24 - Completed: Users should be able to drag and reposition the boxes/nodes that represent SQL tables and views in the lineage graph.
+
+## Curated Project Context
+## Project Overview
+- Column Lineage Explorer: a Flask + vanilla-JS web app that parses PostgreSQL DDL from `schema.txt` and renders an interactive SVG-based directed acyclic graph showing column-level data flow between SQL tables and views.
+- Currently 5 base tables and 5 parsed views (the schema defines 8 views but the parser's regex captures 5; `MODEL_LAYERS` in `app.js` only maps those 10 models).
+- The current pending task is adding drag-and-reposition support for individual table/view nodes in the lineage graph.
+
+## Architecture Notes
+- **Backend** (`app.py`): Flask serves static files and exposes four JSON API endpoints (`/api/graph`, `/api/models`, `/api/upstream/<model>/<column>`, `/api/downstream/<model>/<column>`). Schema is parsed once at startup into `MODELS` and `GRAPH` module-level variables.
+- **Parser** (`lineage_parser.py`): ~800-line custom SQL DDL parser using regex. Handles CTEs, UNION ALL, window functions, aliases, casts, aggregates. CTE names are resolved transparently so lineage only references real tables/views.
+- **Frontend** (`static/app.js`): Self-contained IIFE (~530 lines). Renders SVG graph with:
+  - `layoutGraph()` — assigns positions via hardcoded `MODEL_LAYERS` map (layer 0–3, left-to-right). Stores positions in `nodePositions` and `columnYPositions`.
+  - `renderNodes()` / `renderEdges()` — creates SVG `<g>`, `<rect>`, `<text>`, and Bezier `<path>` elements. Edges are drawn using absolute coordinates from `nodePositions` and `columnYPositions`.
+  - `setupPanZoom()` — handles canvas-level drag (pan) and mouse-wheel zoom on the `#graph-root` `<g>` element. Uses `viewTransform { x, y, scale }`.
+  - Node groups have `transform="translate(x, y)"` but **no individual drag handlers**. Only the canvas background / edge group triggers panning.
+- **Key constraint for drag task**: Moving a node requires updating `nodePositions[nodeId]` and `columnYPositions[nodeId][*]`, then re-rendering edges (or at minimum recalculating the connected edge paths). The current edge rendering uses absolute coordinates derived from `nodePositions`, so edges must be redrawn/updated whenever a node moves.
+- Canvas pan is triggered only when `mousedown` target is the SVG root or inside `#edges-group` (line 474). This provides a natural separation: node elements can get their own drag handlers without conflicting with canvas pan.
+
+## Important Files
+- `app.py` — Flask server, 4 API routes, no changes needed for drag feature.
+- `lineage_parser.py` — SQL parser producing the graph model. No changes needed for drag.
+- `static/app.js` — **Primary file to modify.** Node rendering, edge rendering, pan/zoom, positions state all live here.
+- `static/style.css` — May need cursor style additions (e.g., `cursor: grab`/`grabbing` on nodes).
+- `static/index.html` — Single-page shell; unlikely to need changes.
+- `schema.txt` — Input SQL schema (5 tables, 8 views defined; parser captures 5 views).
+- `requirements.txt` — Only dependency: `flask>=3.0`.
+- `tests/test_lineage.py` — 56 tests on lineage extraction logic.
+- `tests/test_tester_verification.py` — 43 tests covering deep lineage proofs, Flask API, graph structure invariants, and UI HTML checks.
+
+## Test And Run Commands
+- `pip install -r requirements.txt` — install dependencies.
+- `python app.py` — run dev server on `http://localhost:5000`.
+- `python -m pytest tests/ -v` — run full test suite (99 tests).
+- `python -m pytest tests/test_lineage.py -v` — lineage extraction tests only.
+- `python -m pytest tests/test_tester_verification.py -v` — verification/integration tests only.
+- `python -m pytest tests/test_tester_verification.py::TestFlaskAPI -v` — Flask API tests via `test_client()` (no live server needed).
+
+## Open Questions Or Risks
+- **Edge re-rendering on drag**: Edges use pre-computed absolute coordinates. Dragging a node requires either (a) full edge re-render via `renderEdges()` on each `mousemove`, or (b) surgically updating only edges connected to the dragged node. Option (b) is more performant but more complex; the graph has ~167 edges, so full re-render may be acceptable.
+- **Pan vs. drag conflict**: `setupPanZoom` triggers pan on `mousedown` targeting the SVG root or `#edges-group`. Node `<g>` elements already exclude themselves from pan. However, the title `<text>` already has a click handler for `selectModel`; drag must coexist (e.g., distinguish click vs. drag by movement threshold).
+- **Persisting positions**: Dragged positions currently live only in `nodePositions` (JS memory). Refreshing the page resets to the `layoutGraph()` defaults. Persisting to `localStorage` would improve UX but is not part of the current task.
+- **Schema parser coverage**: `schema.txt` defines 8 views but the parser's regex only captures 5 (`stg_orders_enriched`, `stg_line_items_priced`, `int_customer_order_metrics`, `fct_customer_revenue_daily`, `mart_customer_ltv_segments`). The three unmatched views (`rpt_customer_growth_cohorts`, `mart_segment_health_snapshot`, `rpt_executive_revenue_dashboard`) likely fail the regex `(?=\s*(?:--|CREATE|DROP|$))` lookahead. Tests assert exactly 5 views / 10 nodes. This is a pre-existing issue unrelated to the drag task but worth noting.
+- **Test coverage for drag**: Existing tests are backend/parser focused. The drag feature is purely frontend (JS); there are no JS test frameworks in the project. Tester verification will likely need to rely on structural checks (e.g., verifying event listeners are registered) or manual browser testing.
 
 ## Known Documentation
 - `README.md`
 
 ## Known Tests
 - `tests/__init__.py`
+- `tests/test_drag_verification.py`
 - `tests/test_lineage.py`
 - `tests/test_tester_verification.py`
 
@@ -40,6 +95,7 @@ Users should be able to drag and reposition the boxes/nodes that represent SQL t
 - `static/index.html`
 - `static/style.css`
 - `tests/__init__.py`
+- `tests/test_drag_verification.py`
 - `tests/test_lineage.py`
 - `tests/test_tester_verification.py`
 

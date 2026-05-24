@@ -290,6 +290,22 @@ main#graph-area {
 }
 
 /* Graph node styles */
+.model-node {
+    cursor: grab;
+}
+
+.model-node .model-title,
+.model-node .column-text {
+    cursor: pointer;
+}
+
+body.node-dragging,
+body.node-dragging .model-node,
+body.node-dragging .model-node .model-title,
+body.node-dragging .model-node .column-text {
+    cursor: grabbing !important;
+}
+
 .model-node rect {
     stroke-width: 2;
     rx: 6;

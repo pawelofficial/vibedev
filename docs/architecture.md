@@ -70,7 +70,7 @@ The coded flow is:
    plan.
 3. Write a draft `.vibedev/common_knowledge.md` with shared workspace context.
 4. Run the ad hoc knowledge curator so it can inspect the workspace and return
-   semantic project context.
+   code-structure context.
 5. Rewrite `.vibedev/common_knowledge.md` with the curator report included.
 6. If `business_analyst` exists, run it against the user request, current
    plan, and a pointer to the common knowledge file.
@@ -132,8 +132,10 @@ team workflow. It includes:
 
 The `knowledge_curator` is an internal ad hoc role, not a public `set_team`
 entry. It runs once at the beginning of each coded team deploy, reads relevant
-workspace files when useful, and returns structured Markdown with project
-overview, architecture notes, important files, commands, and risks. Python then
+workspace files when useful, and returns structured Markdown about code
+structure only: modules, entry points, tests/tooling, extension points, and
+structural notes. It should not summarize product requirements, acceptance
+criteria, user stories, plan history, or broad project narrative. Python then
 writes that report into `## Curated Project Context`. The agent does not edit
 the file directly.
 

@@ -43,8 +43,9 @@ review stage:
 3. Python writes a draft `.vibedev/common_knowledge.md` with shared workspace
    context.
 4. Python runs an internal ad hoc `knowledge_curator` at the beginning of each
-   coded team deploy. It inspects the workspace and returns structured project
-   context; Python writes that report into common knowledge.
+   coded team deploy. It inspects the workspace and returns structured
+   code-structure context only; Python writes that report into common
+   knowledge.
 5. Python optionally runs `business_analyst` against the request, current plan,
    and a pointer to common knowledge.
 6. Python parses the analyst's `## Proposed Tasks` section and appends missing

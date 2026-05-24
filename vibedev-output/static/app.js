@@ -17,6 +17,11 @@
     let isDragging = false;
     let dragStart = { x: 0, y: 0 };
 
+    // Node drag state
+    let nodeDragState = null; // { nodeId, startX, startY, origNodeX, origNodeY, hasMoved }
+    const NODE_DRAG_THRESHOLD = 4; // px in screen-space before a press becomes a drag
+    const SESSION_KEY = 'vibedev-lineage-positions';
+
     // Constants
     const NODE_WIDTH = 250;
     const COLUMN_HEIGHT = 20;
@@ -75,6 +80,9 @@
     }
 
     function layoutGraph() {
+        // Try to restore saved positions from sessionStorage
+        const savedPositions = loadPositionsFromSession();
+
         // Group nodes by layer
         const layers = {};
         graphData.nodes.forEach(node => {
@@ -92,16 +100,22 @@
             let y = startY;
             layerNodes.forEach(node => {
                 const nodeHeight = HEADER_HEIGHT + (node.columns.length * COLUMN_HEIGHT) + NODE_PADDING * 2;
+
+                // Use saved position if available, otherwise compute default
+                const saved = savedPositions?.[node.id];
+                const posX = saved ? saved.x : startX + layerIdx * LAYER_GAP_X;
+                const posY = saved ? saved.y : y;
+
                 nodePositions[node.id] = {
-                    x: startX + layerIdx * LAYER_GAP_X,
-                    y: y,
+                    x: posX,
+                    y: posY,
                     width: NODE_WIDTH,
                     height: nodeHeight,
                 };
                 // Track column Y positions
                 columnYPositions[node.id] = {};
                 node.columns.forEach((col, i) => {
-                    columnYPositions[node.id][col.name] = y + HEADER_HEIGHT + NODE_PADDING + (i * COLUMN_HEIGHT) + COLUMN_HEIGHT / 2;
+                    columnYPositions[node.id][col.name] = posY + HEADER_HEIGHT + NODE_PADDING + (i * COLUMN_HEIGHT) + COLUMN_HEIGHT / 2;
                 });
                 y += nodeHeight + NODE_GAP_Y;
             });
@@ -160,6 +174,9 @@
     }
 
     function renderNodes(container) {
+        const nodesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        nodesGroup.id = 'nodes-group';
+
         graphData.nodes.forEach(node => {
             const pos = nodePositions[node.id];
             if (!pos) return;
@@ -181,11 +198,6 @@
             title.setAttribute('y', 22);
             title.setAttribute('class', 'model-title');
             title.textContent = node.id;
-            title.style.cursor = 'pointer';
-            title.addEventListener('click', (e) => {
-                e.stopPropagation();
-                selectModel(node.id);
-            });
             g.appendChild(title);
 
             // Columns
@@ -200,15 +212,203 @@
                 text.dataset.model = node.id;
                 text.dataset.column = col.name;
                 text.textContent = col.is_derived ? `◆ ${col.name}` : `  ${col.name}`;
-                text.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    selectColumn(node.id, col.name);
-                });
                 g.appendChild(text);
             });
 
-            container.appendChild(g);
+            // --- Node-level pointer event handlers for drag + click ---
+            setupNodeDrag(g, node);
+
+            nodesGroup.appendChild(g);
         });
+
+        container.appendChild(nodesGroup);
+    }
+
+    /**
+     * Set up pointer-based drag handling on a node <g> element.
+     * Uses a 4px movement threshold to disambiguate click from drag.
+     * Clicks on title text fire selectModel; clicks on column text fire selectColumn.
+     */
+    function setupNodeDrag(groupEl, node) {
+        groupEl.addEventListener('pointerdown', (e) => {
+            // Only primary button
+            if (e.button !== 0) return;
+            e.stopPropagation();
+
+            // Capture pointer so we get events even if cursor leaves the SVG
+            groupEl.setPointerCapture(e.pointerId);
+
+            nodeDragState = {
+                nodeId: node.id,
+                pointerId: e.pointerId,
+                startX: e.clientX,
+                startY: e.clientY,
+                origNodeX: nodePositions[node.id].x,
+                origNodeY: nodePositions[node.id].y,
+                hasMoved: false,
+                target: e.target,
+            };
+        });
+
+        groupEl.addEventListener('pointermove', (e) => {
+            if (!nodeDragState || nodeDragState.nodeId !== node.id) return;
+
+            const dx = e.clientX - nodeDragState.startX;
+            const dy = e.clientY - nodeDragState.startY;
+
+            // Check threshold before activating drag
+            if (!nodeDragState.hasMoved) {
+                if (Math.abs(dx) < NODE_DRAG_THRESHOLD && Math.abs(dy) < NODE_DRAG_THRESHOLD) {
+                    return; // Still within click deadzone
+                }
+                nodeDragState.hasMoved = true;
+                // Raise node to top z-order
+                const parent = groupEl.parentNode;
+                parent.appendChild(groupEl);
+                // Set grabbing cursor on body during drag
+                document.body.classList.add('node-dragging');
+            }
+
+            // Convert screen delta to graph-space delta (divide by zoom scale)
+            const graphDx = dx / viewTransform.scale;
+            const graphDy = dy / viewTransform.scale;
+            const newX = nodeDragState.origNodeX + graphDx;
+            const newY = nodeDragState.origNodeY + graphDy;
+
+            // Update positions
+            updateNodePosition(node.id, newX, newY);
+
+            // Update this node's transform
+            groupEl.setAttribute('transform', `translate(${newX}, ${newY})`);
+
+            // Surgically update only connected edges
+            updateConnectedEdges(node.id);
+        });
+
+        groupEl.addEventListener('pointerup', (e) => {
+            if (!nodeDragState || nodeDragState.nodeId !== node.id) return;
+
+            groupEl.releasePointerCapture(e.pointerId);
+
+            if (nodeDragState.hasMoved) {
+                // Was a drag — save positions
+                document.body.classList.remove('node-dragging');
+                savePositionsToSession();
+            } else {
+                // Was a click — dispatch to appropriate handler
+                handleNodeClick(nodeDragState.target, node.id);
+            }
+
+            nodeDragState = null;
+        });
+
+        groupEl.addEventListener('pointercancel', (e) => {
+            if (!nodeDragState || nodeDragState.nodeId !== node.id) return;
+            groupEl.releasePointerCapture(e.pointerId);
+            document.body.classList.remove('node-dragging');
+            nodeDragState = null;
+        });
+    }
+
+    /**
+     * Handle a click (not drag) on a node element.
+     * Determines whether it was on a column text or the title/background.
+     */
+    function handleNodeClick(target, nodeId) {
+        // Walk up from the click target to find what was clicked
+        const colText = target.closest ? target.closest('.column-text') : null;
+        if (colText && colText.dataset.column) {
+            selectColumn(colText.dataset.model || nodeId, colText.dataset.column);
+            return;
+        }
+        // Title or background — select the model
+        selectModel(nodeId);
+    }
+
+    /**
+     * Update nodePositions and columnYPositions for a given node.
+     */
+    function updateNodePosition(nodeId, newX, newY) {
+        const pos = nodePositions[nodeId];
+        const deltaY = newY - pos.y;
+        pos.x = newX;
+        pos.y = newY;
+
+        // Shift all column Y positions by the same delta
+        const colPositions = columnYPositions[nodeId];
+        if (colPositions) {
+            for (const colName in colPositions) {
+                colPositions[colName] += deltaY;
+            }
+        }
+    }
+
+    /**
+     * Surgically update only SVG <path> edges connected to the given node.
+     * Much more performant than re-rendering all ~167 edges.
+     */
+    function updateConnectedEdges(nodeId) {
+        const edgesGroup = document.getElementById('edges-group');
+        if (!edgesGroup) return;
+
+        const paths = edgesGroup.querySelectorAll(
+            `path[data-source-model="${nodeId}"], path[data-target-model="${nodeId}"]`
+        );
+
+        paths.forEach(path => {
+            const srcModel = path.dataset.sourceModel;
+            const srcCol = path.dataset.sourceColumn;
+            const tgtModel = path.dataset.targetModel;
+            const tgtCol = path.dataset.targetColumn;
+
+            const sourcePos = nodePositions[srcModel];
+            const targetPos = nodePositions[tgtModel];
+            if (!sourcePos || !targetPos) return;
+
+            const sourceColY = columnYPositions[srcModel]?.[srcCol];
+            const targetColY = columnYPositions[tgtModel]?.[tgtCol];
+            if (sourceColY === undefined || targetColY === undefined) return;
+
+            const x1 = sourcePos.x + sourcePos.width;
+            const y1 = sourceColY;
+            const x2 = targetPos.x;
+            const y2 = targetColY;
+            const midX = (x1 + x2) / 2;
+
+            path.setAttribute('d', `M${x1},${y1} C${midX},${y1} ${midX},${y2} ${x2},${y2}`);
+        });
+    }
+
+    // --- sessionStorage helpers ---
+
+    function savePositionsToSession() {
+        try {
+            const data = {};
+            for (const nodeId in nodePositions) {
+                data[nodeId] = { x: nodePositions[nodeId].x, y: nodePositions[nodeId].y };
+            }
+            sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
+        } catch (e) {
+            // sessionStorage may be unavailable in some contexts; silently ignore
+        }
+    }
+
+    function loadPositionsFromSession() {
+        try {
+            const raw = sessionStorage.getItem(SESSION_KEY);
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function clearPositionsFromSession() {
+        try {
+            sessionStorage.removeItem(SESSION_KEY);
+        } catch (e) {
+            // ignore
+        }
     }
 
     function selectModel(modelId) {
@@ -444,7 +644,10 @@
 
     function resetView() {
         viewTransform = { x: 0, y: 0, scale: 1 };
-        applyTransform();
+        // Clear saved positions and re-layout from defaults
+        clearPositionsFromSession();
+        layoutGraph();
+        renderGraph();
         // Clear selection
         selectedModel = null;
         selectedColumn = null;

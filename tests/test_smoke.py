@@ -382,6 +382,8 @@ Build an app.
     assert "- [ ] Build the first feature" in prompt
     assert "Current generated common knowledge draft:" in prompt
     assert "`tests/test_app.py`" in prompt
+    assert "summarize only the code structure" in prompt
+    assert "Avoid\nproduct requirements" in prompt
     assert "Do not edit" in prompt
     assert "Python will write your report" in prompt
 
@@ -470,12 +472,12 @@ def test_write_common_knowledge_includes_curated_context(tmp_path):
         tmp_path,
         "build demo app",
         plan,
-        curated_context="## Project Overview\n- Flask app with JSON routes.",
+        curated_context="## Code Structure\n- `app.py` defines the Flask routes.",
     )
 
     assert "## Curated Project Context" in content
-    assert "## Project Overview" in content
-    assert "Flask app with JSON routes." in content
+    assert "## Code Structure" in content
+    assert "`app.py` defines the Flask routes." in content
 
 
 def test_coded_team_workflow_runs_knowledge_curator_first(tmp_path, monkeypatch):
@@ -484,7 +486,7 @@ def test_coded_team_workflow_runs_knowledge_curator_first(tmp_path, monkeypatch)
     async def fake_run_query(prompt, options, logger, quiet):  # noqa: ANN001, ARG001
         calls.append(prompt)
         if "Current generated common knowledge draft:" in prompt:
-            return "## Project Overview\n- Curated workspace context."
+            return "## Code Structure\n- Curated workspace structure."
         if "Current Python-owned plan:" in prompt:
             return """## Missing Requirements
 
@@ -531,7 +533,7 @@ def test_coded_team_workflow_runs_knowledge_curator_first(tmp_path, monkeypatch)
 
     assert calls[0].startswith("User request:")
     assert "Current generated common knowledge draft:" in calls[0]
-    assert "Curated workspace context." in common_knowledge
+    assert "Curated workspace structure." in common_knowledge
 
 
 def test_prompt_summaries_do_not_copy_full_prompt():

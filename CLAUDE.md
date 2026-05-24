@@ -69,9 +69,9 @@ the workspace, so the caller can open / inspect the generated code afterwards.
 and tester are configured, Python owns the lifecycle: read/create
 `.vibedev/plan.md`, append the current request as a pending task when needed,
 write a draft `.vibedev/common_knowledge.md`, run an internal ad hoc
-`knowledge_curator` to inspect the workspace and return shared project context,
-rewrite common knowledge with that report, pass agents a pointer to that file,
-optionally run the business analyst against the current plan, append
+`knowledge_curator` to inspect the workspace and return code-structure context
+only, rewrite common knowledge with that report, pass agents a pointer to that
+file, optionally run the business analyst against the current plan, append
 analyst-proposed tasks, pick the next `[ ]` task, run developer, run tester,
 parse the tester’s
 `VIBEDEV_VERDICT`, send failures back to the developer, and mark `[x]` only
@@ -232,11 +232,12 @@ The package is intentionally small — six modules under `src/vibedev/`:
 
 vibedev owns the high-level team lifecycle in Python when both `developer`
 and `tester` are configured. It reads/writes `.vibedev/plan.md`, writes
-`.vibedev/common_knowledge.md` for shared project context, optionally runs
-`business_analyst` to challenge the plan and propose tasks, selects the next
-pending task, runs the developer agent, runs the tester agent, parses the
-tester’s `VIBEDEV_VERDICT`, sends failures back to the developer, marks the
-task complete only after tester pass, and records blockers on repeated failure.
+`.vibedev/common_knowledge.md` with code-structure context from the internal
+knowledge curator, optionally runs `business_analyst` to challenge the plan and
+propose tasks, selects the next pending task, runs the developer agent, runs
+the tester agent, parses the tester’s `VIBEDEV_VERDICT`, sends failures back to
+the developer, marks the task complete only after tester pass, and records
+blockers on repeated failure.
 The SDK still does the heavy agent execution for each role via `query(...)`;
 vibedev owns the ordering, retry policy, and plan state transitions.
 

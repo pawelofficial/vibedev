@@ -408,9 +408,11 @@ Current Python-owned plan:
 Current generated common knowledge draft:
 {common_knowledge.strip() or "(not written yet)"}
 
-Inspect the workspace and improve the shared project understanding for the team.
-Return only the structured Markdown requested by your system prompt. Do not edit
-files; Python will write your report into `.vibedev/common_knowledge.md`.
+Inspect the workspace and summarize only the code structure for the team. Avoid
+product requirements, acceptance criteria, plan history, feature wishlists, or
+broad project narrative. Return only the structured Markdown requested by your
+system prompt. Do not edit files; Python will write your report into
+`.vibedev/common_knowledge.md`.
 """
 
 

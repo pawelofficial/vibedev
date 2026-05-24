@@ -4,13 +4,14 @@ Interactive web application that parses SQL DDL (tables and views) and displays 
 
 ## Features
 
-- **Model Nodes**: Shows all 5 base tables and 5 views as interactive graph nodes
+- **Model Nodes**: Shows all 5 base tables and 8 views as interactive graph nodes
 - **Column-Level Lineage Edges**: Traces data flow from source columns to derived columns
 - **Click to Inspect**: Click any model or column to see upstream/downstream lineage
 - **Multi-Source Derivation**: Columns derived from multiple upstream sources are marked with ◆
 - **Search**: Search box for finding models and columns by name
 - **Default View**: Opens focused on the `mart_customer_ltv_segments` model
 - **Pan & Zoom**: Mouse drag to pan, scroll wheel to zoom
+- **Drag-to-Reposition Nodes**: Click and drag any table or view node to reposition it on the canvas. Connected edges update in real time. Positions persist across page refreshes via `sessionStorage` (cleared when the browser tab closes). Click "Reset View" to restore all nodes to their default layout positions
 
 ## Lineage Capabilities
 
@@ -52,36 +53,42 @@ python app.py
 ## Test
 
 ```bash
-# Run the full test suite (99 tests)
+# Run the full test suite (163 tests)
 python -m pytest tests/ -v
 
 # Run only the lineage-extraction tests (56 tests)
 python -m pytest tests/test_lineage.py -v
 
-# Run only the verification / integration tests (43 tests)
+# Run only the verification / integration tests (54 tests)
 python -m pytest tests/test_tester_verification.py -v
+
+# Run only the drag-feature verification tests (53 tests)
+python -m pytest tests/test_drag_verification.py -v
 
 # Run specific test classes
 python -m pytest tests/test_lineage.py::TestSpecificLineageRequirements -v
 python -m pytest tests/test_lineage.py::TestMartCustomerLtvSegments -v
 python -m pytest tests/test_tester_verification.py::TestDeepLineageProofs -v
 python -m pytest tests/test_tester_verification.py::TestFlaskAPI -v
+python -m pytest tests/test_tester_verification.py::TestDragInfrastructure -v
 ```
 
 ## Project Structure
 
 ```
-├── app.py                 # Flask web server + API endpoints
-├── lineage_parser.py      # SQL DDL parser + lineage extraction engine
-├── schema.txt             # Input SQL schema (5 tables, 5 views)
+├── app.py                          # Flask web server + API endpoints
+├── lineage_parser.py               # SQL DDL parser + lineage extraction engine
+├── schema.txt                      # Input SQL schema (5 tables, 8 views)
 ├── static/
-│   ├── index.html         # Main UI page
-│   ├── app.js             # Frontend graph visualization (SVG-based)
-│   └── style.css          # Dark-theme styles
+│   ├── index.html                  # Main UI page
+│   ├── app.js                      # Frontend graph visualization (SVG-based)
+│   └── style.css                   # Dark-theme styles
 ├── tests/
-│   └── test_lineage.py    # 56 tests covering all lineage scenarios
-├── requirements.txt       # Python dependencies
-└── README.md              # This file
+│   ├── test_lineage.py             # 56 tests covering all lineage scenarios
+│   ├── test_tester_verification.py # 54 tests: deep lineage, API, graph, drag infrastructure
+│   └── test_drag_verification.py   # 53 tests: drag-feature structural verification
+├── requirements.txt                # Python dependencies
+└── README.md                       # This file
 ```
 
 ## API Endpoints
