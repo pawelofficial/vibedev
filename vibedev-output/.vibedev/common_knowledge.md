@@ -7,7 +7,7 @@ It captures shared project context; Python owns workflow state in the plan.
 Build a column-lineage web app for the SQL models in schema.txt.
 
 ## Current Request
-Modularize the Flask backend currently concentrated in app.py so the backend is easier to maintain and extend.
+Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
 
 ## Important Paths
 - Plan: `.vibedev/plan.md`
@@ -25,7 +25,7 @@ Modularize the Flask backend currently concentrated in app.py so the backend is 
 - [x] Raise dragged node to top z-order (re-append the `<g>` element to its parent) during drag to avoid overlap confusion.
 - [x] Add Python/pytest structural tests verifying: (a) the `app.js` source contains pointer event listeners on node groups, (b) the `style.css` contains `cursor: grab` for `.model-node`, (c) the Flask-served HTML includes `app.js` with drag-rel...
 - [x] Update `README.md` to document the new drag-to-reposition behavior under the Features section and note session-scoped persistence.
-- [ ] Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
+- [x] Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
 - [ ] **Decide on module layout**: Choose between flat peer modules (`routes.py`, `schema_service.py` beside `app.py`) or a Flask package directory (`app/` with `__init__.py`).
 - [ ] **Extract schema loading into `schema_service.py`**: Move `SCHEMA_PATH` resolution, `parse_schema()` call, and `MODELS`/`GRAPH` computation into a dedicated module with a public `load_schema()` function that returns `(models, graph)` and c...
 - [ ] **Extract API route handlers into `routes.py`**: Move the five route handler functions (`index`, `api_graph`, `api_upstream`, `api_downstream`, `api_models`) into a Flask Blueprint in a new `routes.py`.
@@ -33,16 +33,61 @@ Modularize the Flask backend currently concentrated in app.py so the backend is 
 - [ ] **Update all test imports to use the new module structure**: Update `from app import app` in `test_tester_verification.py` (3 occurrences) and `test_drag_verification.py` (1 occurrence) to import through the new structure.
 - [ ] **Run the full pytest suite (`python -m pytest tests/ -v`) and fix any regressions** caused by the refactor.
 - [ ] **Update `README.md`**: Revise the "Project Structure" tree diagram to show the new modules.
+- [x] **Remove the "Decide on module layout" task** — commit to the flat peer-module approach (`schema_service.py` and `routes.py` as siblings of `app.py`).
+- [x] **Resolve whether the explicit `static_files` route should be kept or dropped** during the Blueprint extraction.
+- [x] **Add a smoke test that `python app.py` still starts the server** (or at minimum, verify the `if __name__ == '__main__'` block is present and `app` is importable from `app.py`).
 
 ## Recent Plan History
-- 2026-05-24 - Request: Build a column-lineage web app for the SQL models in schema.txt.
-- 2026-05-24 - Completed: Build a column-lineage web app for the SQL models in schema.txt.
-- 2026-05-24 - Request: Users should be able to drag and reposition the boxes/nodes that represent SQL tables and views in the lineage graph.
-- 2026-05-24 - Request: Users should be able to drag and reposition the boxes/nodes that represent SQL tables and views in the lineage graph.
-- 2026-05-24 - Analyst review: ## Missing Requirements - **Click vs. drag disambiguation**: The title `<text>` element already has a `click` handler for `selectModel` and column texts have `click` for `selectColumn`. The plan does not specify how to distinguish a click (selection) from a drag (reposition). A movement-th...
-- 2026-05-24 - Completed: Users should be able to drag and reposition the boxes/nodes that represent SQL tables and views in the lineage graph.
 - 2026-05-24 - Request: Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
 - 2026-05-24 - Analyst review: Let me examine the current codebase to understand what's in `app.py` and the existing test structure before I can provide a thorough analysis. Now I have a complete picture of the codebase. Let me provide my analysis. --- ## Missing Requirements - **Target module layout is unspecified.** T...
+- 2026-05-25 - Request: Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
+- 2026-05-25 - Analyst review: Let me examine the current codebase to understand the existing structure before providing my analysis. Now let me check how `test_lineage.py` handles imports, and also verify if there's a `conftest.py`: Now I have a complete picture of the codebase. Here is my analysis: --- ## Missing Requ...
+- 2026-05-25 - Completed: Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
+- 2026-05-25 - Completed: **Remove the "Decide on module layout" task** — commit to the flat peer-module approach (`schema_service.py` and `routes.py` as siblings of `app.py`).
+- 2026-05-25 - Completed: **Resolve whether the explicit `static_files` route should be kept or dropped** during the Blueprint extraction.
+- 2026-05-25 - Completed: **Add a smoke test that `python app.py` still starts the server** (or at minimum, verify the `if __name__ == '__main__'` block is present and `app` is importable from `app.py`).
+
+## Curated Project Context
+Now let me read the test files and the frontend files:
+Now let me read the frontend files and the README:
+Now let me check the `.vibedev/` directory for any additional files:
+I have a complete picture of the workspace. Here is my report:
+
+## Code Structure
+- **`app.py`** (64 lines) — Flask application and all backend logic in one file. Creates the `Flask` instance, loads `schema.txt` at import time via `lineage_parser`, stores parsed `MODELS` and `GRAPH` as module-level globals, and defines six route handlers (`/`, `/api/graph`, `/api/upstream/<model>/<col>`, `/api/downstream/<model>/<col>`, `/api/models`, `/static/<path>`). Also contains the `if __name__ == '__main__'` development server entry point.
+- **`lineage_parser.py`** (~796 lines) — Pure-Python SQL DDL parser. Exports four public functions: `parse_schema(sql_text) → Dict[str, Model]`, `get_lineage_graph(models) → dict`, `get_upstream_lineage(...)`, `get_downstream_lineage(...)`. Defines dataclasses `ColumnLineage` and `Model`. Handles CTEs, UNION ALL, window functions, aggregates, filtered aggregates, multi-table joins, `SELECT *` expansion, and CTE-to-real-model resolution. No external dependencies beyond stdlib (`re`, `dataclasses`, `typing`).
+- **`schema.txt`** — Input SQL DDL: 5 base tables (`raw_customers`, `raw_orders`, `raw_order_items`, `raw_products`, `raw_payments`) plus 8 views (staging → intermediate → mart → reporting layers). Also includes a dummy `nosuchtable`.
+- **`static/index.html`** — Single-page HTML shell. Loads `style.css` and `app.js`. Contains header with search, sidebar with model list and detail panel, SVG graph area with reset/focus-mart controls.
+- **`static/app.js`** (~735+ lines) — IIFE-wrapped vanilla JS. Owns all frontend state: graph data, node positions, view transform, drag/pan state. Key functions: `init`, `layoutGraph`, `renderGraph`, `renderNodes`, `renderEdges`, `setupNodeDrag`, `updateConnectedEdges`, `handleNodeClick`, `selectModel`, `selectColumn`, `resetView`, `focusMart`, sessionStorage position helpers. SVG-based rendering with no external libraries.
+- **`static/style.css`** — Dark-theme CSS for the app. Includes cursor grab/grabbing rules for node drag, pointer cursor for interactive text, layout for sidebar/graph split.
+- **`requirements.txt`** — Single dependency: `flask>=3.0`.
+
+## Entry Points And Flow
+- **Web server**: `python app.py` starts Flask dev server on port 5000. `app.py` is both the entry point and the application module.
+- **Import-time initialization**: When `app.py` is imported, it reads `schema.txt` (resolved relative to `__file__`), calls `parse_schema()`, and computes `MODELS` and `GRAPH` as module globals. This means importing `app` has a side effect (file I/O + parsing).
+- **Request flow**: `GET /` → serves `static/index.html`. Browser loads `app.js`, which calls `GET /api/graph` on `DOMContentLoaded`. API handlers (`api_graph`, `api_upstream`, `api_downstream`, `api_models`) read from the pre-computed `MODELS`/`GRAPH` globals and return JSON via `jsonify()`.
+- **Test entry**: `python -m pytest tests/ -v`. Tests import `lineage_parser` directly (for parser tests) and `from app import app` (for Flask test client tests). Tests use `sys.path.insert` to resolve the parent directory.
+
+## Tests And Tooling
+- **`tests/__init__.py`** — Empty; marks `tests/` as a package.
+- **`tests/test_lineage.py`** (56 tests) — Parser unit/integration tests. Loads `schema.txt` at module level. Classes: `TestBaseTableParsing`, `TestStgOrdersEnriched`, `TestStgLineItemsPriced`, `TestIntCustomerOrderMetrics`, `TestFctCustomerRevenueDaily`, `TestMartCustomerLtvSegments`, `TestGraphStructure`, `TestSpecificLineageRequirements`. Imports directly from `lineage_parser`.
+- **`tests/test_tester_verification.py`** (54 tests) — Deeper verification. Imports `lineage_parser` and `from app import app` (3 occurrences via `setup_class` in `TestFlaskAPI` and `TestUIStructure`, plus `TestDragInfrastructure`). Classes: `TestNoCTELeakage`, `TestDeepLineageProofs`, `TestFlaskAPI`, `TestGraphInvariants`, `TestCrossLayerLineage`, `TestColumnPresence`, `TestUIStructure`, `TestDragInfrastructure`.
+- **`tests/test_drag_verification.py`** (53 tests) — Structural verification of drag feature. Uses `from app import app` (1 occurrence via `flask_client` fixture). 16 test classes covering pointer events, click/drag threshold, CSS cursors, sessionStorage, z-ordering, edge updates, pan/drag separation, README content checks.
+- **Import pattern**: All three test files use `sys.path.insert(0, str(Path(__file__).parent.parent))` and import `from app import app` for Flask test client access. Four total `from app import app` sites across tests.
+
+## Extension Points
+- **`lineage_parser.py`** is fully decoupled from Flask — it is a pure parsing library. It can be imported and used independently.
+- **`app.py`** holds all Flask wiring: routes, static file serving, schema loading, and the app instance. The planned refactor targets splitting this into `schema_service.py` (data loading), `routes.py` (Blueprint with route handlers), and a slim `app.py` (factory/entry point).
+- **`schema.txt`** path is hardcoded in `app.py` as `Path(__file__).parent / 'schema.txt'`. Tests also hardcode `Path(__file__).parent.parent / 'schema.txt'`.
+- **No application factory pattern** currently — `app` is a module-level `Flask(...)` instance with routes registered at import time.
+
+## Structural Notes
+- **All backend logic in `app.py`**: schema loading (lines 17–20), all 6 route definitions (lines 23–59), and the dev-server block (lines 62–63) are in one 64-line file. This is the refactor target.
+- **Module-level side effects**: Importing `app` triggers `schema.txt` file read and full parse. Tests depend on this behavior.
+- **Flat file layout**: No Python packages — `app.py`, `lineage_parser.py`, `schema.txt`, and `static/` are all peers at the workspace root. Tests live in `tests/` and use `sys.path` manipulation.
+- **Test coupling to `app.py`**: Four `from app import app` import sites across tests. The `TestFlaskAPI`, `TestUIStructure`, `TestDragInfrastructure` classes (in `test_tester_verification.py`), and the `flask_client` fixture (in `test_drag_verification.py`) all depend on the current module path.
+- **No Blueprint usage**: Routes are registered directly on the `app` object, not via a Flask Blueprint.
+- **`nosuchtable`** is defined in `schema.txt` and appears in the parsed models/graph (the parser picks up all `CREATE TABLE` statements), referenced in the final executive dashboard view.
 
 ## Known Documentation
 - `README.md`
@@ -51,19 +96,23 @@ Modularize the Flask backend currently concentrated in app.py so the backend is 
 - `tests/__init__.py`
 - `tests/test_drag_verification.py`
 - `tests/test_lineage.py`
+- `tests/test_modularization.py`
 - `tests/test_tester_verification.py`
 
 ## Notable Project Files
 - `app.py`
 - `lineage_parser.py`
 - `requirements.txt`
+- `routes.py`
 - `schema.txt`
+- `schema_service.py`
 - `static/app.js`
 - `static/index.html`
 - `static/style.css`
 - `tests/__init__.py`
 - `tests/test_drag_verification.py`
 - `tests/test_lineage.py`
+- `tests/test_modularization.py`
 - `tests/test_tester_verification.py`
 
 ## Team Workflow

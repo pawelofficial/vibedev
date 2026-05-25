@@ -53,7 +53,7 @@ python app.py
 ## Test
 
 ```bash
-# Run the full test suite (163 tests)
+# Run the full test suite (193 tests)
 python -m pytest tests/ -v
 
 # Run only the lineage-extraction tests (56 tests)
@@ -64,6 +64,9 @@ python -m pytest tests/test_tester_verification.py -v
 
 # Run only the drag-feature verification tests (53 tests)
 python -m pytest tests/test_drag_verification.py -v
+
+# Run only the backend modularization tests (30 tests)
+python -m pytest tests/test_modularization.py -v
 
 # Run specific test classes
 python -m pytest tests/test_lineage.py::TestSpecificLineageRequirements -v
@@ -76,7 +79,9 @@ python -m pytest tests/test_tester_verification.py::TestDragInfrastructure -v
 ## Project Structure
 
 ```
-├── app.py                          # Flask web server + API endpoints
+├── app.py                          # Flask application entry point (creates app, registers blueprint)
+├── routes.py                       # Flask Blueprint with all route handlers
+├── schema_service.py               # Schema loading service (parses schema.txt, caches result)
 ├── lineage_parser.py               # SQL DDL parser + lineage extraction engine
 ├── schema.txt                      # Input SQL schema (5 tables, 8 views)
 ├── static/
@@ -86,7 +91,8 @@ python -m pytest tests/test_tester_verification.py::TestDragInfrastructure -v
 ├── tests/
 │   ├── test_lineage.py             # 56 tests covering all lineage scenarios
 │   ├── test_tester_verification.py # 54 tests: deep lineage, API, graph, drag infrastructure
-│   └── test_drag_verification.py   # 53 tests: drag-feature structural verification
+│   ├── test_drag_verification.py   # 53 tests: drag-feature structural verification
+│   └── test_modularization.py      # 30 tests: module structure, imports, caching, backward compat
 ├── requirements.txt                # Python dependencies
 └── README.md                       # This file
 ```
@@ -103,6 +109,17 @@ python -m pytest tests/test_tester_verification.py::TestDragInfrastructure -v
 
 ## Architecture
 
+### Backend modules
+
+The Flask backend is split into three peer modules for maintainability:
+
+- **`app.py`** — Thin entry point (~12 lines). Creates the `Flask` instance, registers the Blueprint from `routes.py`, and provides the `if __name__ == '__main__'` dev-server block. `from app import app` still works for backward compatibility.
+- **`schema_service.py`** — Schema loading with module-level caching. `load_schema()` reads and parses `schema.txt` once; subsequent calls return the same cached `(MODELS, GRAPH)` tuple.
+- **`routes.py`** — Flask Blueprint (`bp`) with all five API route handlers. Imports parsed data from `schema_service` rather than parsing directly.
+- **`lineage_parser.py`** — Pure-Python SQL DDL parser, fully decoupled from Flask.
+
+### Parser
+
 The parser is pragmatic and tailored to PostgreSQL DDL. It:
 
 1. Extracts `CREATE TABLE` definitions for base table columns
@@ -111,5 +128,7 @@ The parser is pragmatic and tailored to PostgreSQL DDL. It:
 4. Extracts SELECT expressions and resolves column references to upstream sources
 5. Resolves CTE references transparently — the final view lineage shows only real tables/views
 6. Handles `SELECT *` expansion from source models
+
+### Frontend
 
 The frontend uses vanilla JavaScript with SVG for rendering the directed acyclic graph. No external visualization libraries required.

@@ -13,6 +13,11 @@ DROP TABLE IF EXISTS raw_orders;
 DROP TABLE IF EXISTS raw_products;
 DROP TABLE IF EXISTS raw_customers;
 
+create table nosuchtable ( 
+    revenue_month varchar,
+    id int
+);
+
 CREATE TABLE raw_customers (
     customer_id          BIGINT PRIMARY KEY,
     external_customer_id TEXT NOT NULL,
@@ -643,6 +648,7 @@ SELECT
     sr.segment_total_revenue_amount / NULLIF(fm.platform_revenue_amount, 0) AS segment_revenue_share,
     sr.segment_total_margin_amount / NULLIF(sr.segment_total_revenue_amount, 0) AS segment_margin_rate,
     sr.at_risk_customer_count::NUMERIC / NULLIF(sr.customer_count, 0) AS segment_at_risk_rate,
+    nst.id,
     CASE
         WHEN sr.avg_health_score >= 750
             AND sr.at_risk_customer_count::NUMERIC / NULLIF(sr.customer_count, 0) < 0.10
@@ -664,4 +670,7 @@ SELECT
     ) AS cumulative_revenue_by_month_rank
 FROM segment_rollup sr
 LEFT JOIN fact_monthly fm
-    ON fm.revenue_month = sr.signup_month;
+    ON fm.revenue_month = sr.signup_month
+left join nosuchtable nst 
+    on fm.revenue_month=nst.revenue_month;
+
