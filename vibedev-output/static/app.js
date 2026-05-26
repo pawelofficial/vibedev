@@ -32,6 +32,7 @@
 
     // Model layer order (left to right)
     const MODEL_LAYERS = {
+        'nosuchtable': 0,
         'raw_customers': 0,
         'raw_orders': 0,
         'raw_order_items': 0,
@@ -42,6 +43,9 @@
         'int_customer_order_metrics': 2,
         'fct_customer_revenue_daily': 2,
         'mart_customer_ltv_segments': 3,
+        'rpt_customer_growth_cohorts': 4,
+        'mart_segment_health_snapshot': 4,
+        'rpt_executive_revenue_dashboard': 5,
     };
 
     // Init

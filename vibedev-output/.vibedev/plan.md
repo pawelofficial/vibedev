@@ -25,7 +25,7 @@ Build a column-lineage web app for the SQL models in schema.txt.
 - [x] **Remove the "Decide on module layout" task** — commit to the flat peer-module approach (`schema_service.py` and `routes.py` as siblings of `app.py`).
 - [x] **Resolve whether the explicit `static_files` route should be kept or dropped** during the Blueprint extraction.
 - [x] **Add a smoke test that `python app.py` still starts the server** (or at minimum, verify the `if __name__ == '__main__'` block is present and `app` is importable from `app.py`).
-- [ ] Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+- [x] Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 - [ ] **Clean up stale plan state**: Mark the 7 pending modularization sub-tasks as complete (the modules `schema_service.py`, `routes.py`, and the slim `app.py` already exist and pass tests), so the developer starts with a clean task list.
 - [ ] **Add `sqlglot` to `requirements.txt`**: Add `sqlglot>=26.0` as a dependency.
 - [ ] **Implement a dbt Jinja preprocessor function**: Create a `_preprocess_dbt_templates(sql_text: str) -> str` function (in `lineage_parser.py` or a new `dbt_preprocessor.py`) that regex-replaces `{{ source('schema', 'table') }}` → `table` (o...
@@ -58,3 +58,5 @@ Build a column-lineage web app for the SQL models in schema.txt.
 - 2026-05-25 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 - 2026-05-26 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 - 2026-05-26 - Analyst review: Let me first examine the existing codebase to understand the current parser, schema, tests, and dependencies before challenging the plan. Now I have a thorough understanding of the codebase. Let me compile my analysis. ## Missing Requirements - **dbt Jinja preprocessing strategy is undefin...
+- 2026-05-26 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+- 2026-05-26 - Completed: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.

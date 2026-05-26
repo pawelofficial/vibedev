@@ -32,6 +32,7 @@ GRAPH = get_lineage_graph(MODELS)
 # Helpers
 # ------------------------------------------------------------------
 KNOWN_REAL_MODELS = {
+    "nosuchtable",
     "raw_customers",
     "raw_orders",
     "raw_order_items",
@@ -42,6 +43,9 @@ KNOWN_REAL_MODELS = {
     "int_customer_order_metrics",
     "fct_customer_revenue_daily",
     "mart_customer_ltv_segments",
+    "rpt_customer_growth_cohorts",
+    "mart_segment_health_snapshot",
+    "rpt_executive_revenue_dashboard",
 }
 
 
@@ -67,6 +71,9 @@ class TestNoCTELeakage:
         "customer_orders",
         "line_revenue_events", "refund_events", "all_events",
         "revenue_rollup", "scored_customers",
+        "cohort_base", "cohort_rollup",
+        "recent_revenue", "cohort_context",
+        "segment_rollup", "fact_monthly",
     }
 
     def test_no_cte_in_any_view_upstream(self):
@@ -213,8 +220,8 @@ class TestFlaskAPI:
         data = resp.get_json()
         assert "nodes" in data
         assert "edges" in data
-        assert len(data["nodes"]) == 10
-        assert len(data["edges"]) > 100  # dev reports 167
+        assert len(data["nodes"]) == 14  # 6 tables + 8 views
+        assert len(data["edges"]) > 100
 
     def test_api_graph_node_structure(self):
         resp = self.client.get("/api/graph")

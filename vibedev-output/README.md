@@ -4,7 +4,7 @@ Interactive web application that parses SQL DDL (tables and views) and displays 
 
 ## Features
 
-- **Model Nodes**: Shows all 5 base tables and 8 views as interactive graph nodes
+- **Model Nodes**: Shows all 6 base tables and 8 views as interactive graph nodes
 - **Column-Level Lineage Edges**: Traces data flow from source columns to derived columns
 - **Click to Inspect**: Click any model or column to see upstream/downstream lineage
 - **Multi-Source Derivation**: Columns derived from multiple upstream sources are marked with ◆
@@ -37,7 +37,7 @@ The parser handles:
 pip install -r requirements.txt
 
 # Or install individually
-pip install flask
+pip install flask sqlglot
 ```
 
 ## Run
@@ -53,7 +53,7 @@ python app.py
 ## Test
 
 ```bash
-# Run the full test suite (193 tests)
+# Run the full test suite (253 tests)
 python -m pytest tests/ -v
 
 # Run only the lineage-extraction tests (56 tests)
@@ -68,12 +68,19 @@ python -m pytest tests/test_drag_verification.py -v
 # Run only the backend modularization tests (30 tests)
 python -m pytest tests/test_modularization.py -v
 
+# Run only the sqlglot parser tests (41 tests)
+python -m pytest tests/test_sqlglot_parser.py -v
+
+# Run only the sqlglot verification tests (19 tests)
+python -m pytest tests/test_tester_sqlglot_verification.py -v
+
 # Run specific test classes
 python -m pytest tests/test_lineage.py::TestSpecificLineageRequirements -v
 python -m pytest tests/test_lineage.py::TestMartCustomerLtvSegments -v
 python -m pytest tests/test_tester_verification.py::TestDeepLineageProofs -v
 python -m pytest tests/test_tester_verification.py::TestFlaskAPI -v
 python -m pytest tests/test_tester_verification.py::TestDragInfrastructure -v
+python -m pytest tests/test_sqlglot_parser.py::TestNestedCTEs -v
 ```
 
 ## Project Structure
@@ -83,16 +90,18 @@ python -m pytest tests/test_tester_verification.py::TestDragInfrastructure -v
 ├── routes.py                       # Flask Blueprint with all route handlers
 ├── schema_service.py               # Schema loading service (parses schema.txt, caches result)
 ├── lineage_parser.py               # SQL DDL parser + lineage extraction engine
-├── schema.txt                      # Input SQL schema (5 tables, 8 views)
+├── schema.txt                      # Input SQL schema (6 tables, 8 views)
 ├── static/
 │   ├── index.html                  # Main UI page
 │   ├── app.js                      # Frontend graph visualization (SVG-based)
 │   └── style.css                   # Dark-theme styles
 ├── tests/
-│   ├── test_lineage.py             # 56 tests covering all lineage scenarios
-│   ├── test_tester_verification.py # 54 tests: deep lineage, API, graph, drag infrastructure
-│   ├── test_drag_verification.py   # 53 tests: drag-feature structural verification
-│   └── test_modularization.py      # 30 tests: module structure, imports, caching, backward compat
+│   ├── test_lineage.py                    # 56 tests covering all lineage scenarios
+│   ├── test_tester_verification.py        # 54 tests: deep lineage, API, graph, drag infrastructure
+│   ├── test_drag_verification.py          # 53 tests: drag-feature structural verification
+│   ├── test_modularization.py             # 30 tests: module structure, imports, caching, backward compat
+│   ├── test_sqlglot_parser.py             # 41 tests: sqlglot parsing, CTEs, UNION ALL, window funcs, dbt templates
+│   └── test_tester_sqlglot_verification.py # 19 tests: sqlglot integration, cross-view chains, fallback path
 ├── requirements.txt                # Python dependencies
 └── README.md                       # This file
 ```
@@ -120,14 +129,17 @@ The Flask backend is split into three peer modules for maintainability:
 
 ### Parser
 
-The parser is pragmatic and tailored to PostgreSQL DDL. It:
+The parser uses [sqlglot](https://github.com/tobymao/sqlglot) as its primary SQL parsing engine, with a regex-based fallback for per-statement error recovery. It:
 
-1. Extracts `CREATE TABLE` definitions for base table columns
-2. Parses `CREATE VIEW` statements including CTEs, UNION ALL, and nested subqueries
-3. Resolves table aliases from FROM/JOIN clauses
-4. Extracts SELECT expressions and resolves column references to upstream sources
-5. Resolves CTE references transparently — the final view lineage shows only real tables/views
-6. Handles `SELECT *` expansion from source models
+1. Parses all SQL DDL via `sqlglot.parse()` (PostgreSQL dialect) for robust AST-based extraction
+2. Extracts `CREATE TABLE` column definitions from the sqlglot AST (`ColumnDef` nodes)
+3. Parses `CREATE VIEW` statements including CTEs, UNION ALL, and nested subqueries via AST traversal
+4. Resolves table aliases from `FROM`/`JOIN` clauses using sqlglot `Table` and `Join` nodes
+5. Extracts SELECT expressions and resolves column references (`Column` nodes) to upstream sources
+6. Resolves CTE references transparently — the final view lineage shows only real tables/views
+7. Handles `SELECT *` expansion from source models
+8. Preprocesses dbt Jinja templates (`{{ source(...) }}`, `{{ ref(...) }}`) before parsing
+9. Falls back to regex parsing per-statement when sqlglot cannot handle a particular construct
 
 ### Frontend
 

@@ -280,13 +280,14 @@ class TestLineageParserUnchanged:
 class TestNoDependencyChanges:
     """No new runtime dependencies should be introduced."""
 
-    def test_requirements_unchanged(self):
+    def test_requirements_has_expected_deps(self):
         req_path = Path(__file__).parent.parent / "requirements.txt"
         content = req_path.read_text(encoding="utf-8").strip()
-        # Should only contain flask
-        assert "flask" in content.lower()
         lines = [l.strip() for l in content.splitlines() if l.strip()]
-        assert len(lines) == 1, f"Expected only flask in requirements.txt, got: {lines}"
+        # Should contain flask and sqlglot
+        assert "flask" in content.lower()
+        assert "sqlglot" in content.lower()
+        assert len(lines) == 2, f"Expected flask and sqlglot in requirements.txt, got: {lines}"
 
 
 # ------------------------------------------------------------------

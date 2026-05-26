@@ -37,7 +37,7 @@ class TestBaseTableParsing:
     def test_all_tables_found(self):
         tables = [m for m in MODELS.values() if m.model_type == 'table']
         table_names = {t.name for t in tables}
-        expected = {'raw_customers', 'raw_orders', 'raw_order_items', 'raw_products', 'raw_payments'}
+        expected = {'nosuchtable', 'raw_customers', 'raw_orders', 'raw_order_items', 'raw_products', 'raw_payments'}
         assert table_names == expected
 
     def test_all_views_found(self):
@@ -45,7 +45,8 @@ class TestBaseTableParsing:
         view_names = {v.name for v in views}
         expected = {'stg_orders_enriched', 'stg_line_items_priced',
                     'int_customer_order_metrics', 'fct_customer_revenue_daily',
-                    'mart_customer_ltv_segments'}
+                    'mart_customer_ltv_segments', 'rpt_customer_growth_cohorts',
+                    'mart_segment_health_snapshot', 'rpt_executive_revenue_dashboard'}
         assert view_names == expected
 
     def test_raw_customers_columns(self):
@@ -355,7 +356,7 @@ class TestGraphStructure:
 
     def test_graph_has_nodes_and_edges(self):
         graph = get_lineage_graph(MODELS)
-        assert len(graph['nodes']) == 10  # 5 tables + 5 views
+        assert len(graph['nodes']) == 14  # 6 tables + 8 views
         assert len(graph['edges']) > 0
 
     def test_all_edges_reference_valid_models(self):

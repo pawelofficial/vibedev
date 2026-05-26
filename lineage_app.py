@@ -25,7 +25,7 @@ vibedev.set_workspace_root("./vibedev-output")
 
 vibedev.set_team(
     [
-        ("business_analyst", "claude-opus-4-6"),
+        #("business_analyst", "claude-opus-4-6"),
         ("developer", "claude-opus-4-6"),
         ("tester", "claude-opus-4-6"),
     ]
