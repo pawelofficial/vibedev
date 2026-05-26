@@ -5,7 +5,12 @@ from __future__ import annotations
 import argparse
 import sys
 
-from vibedev.config import set_model, set_permissions, set_workspace_root
+from vibedev.config import (
+    set_common_knowledge,
+    set_model,
+    set_permissions,
+    set_workspace_root,
+)
 from vibedev.core import prompt as run_prompt
 
 
@@ -28,6 +33,11 @@ def main(argv: list[str] | None = None) -> int:
         "--workspace-root",
         help="Workspace root directory (default: ./vibedev-output, used directly).",
     )
+    parser.add_argument(
+        "--no-common-knowledge",
+        action="store_true",
+        help="Skip generated .vibedev/common_knowledge.md and the knowledge curator.",
+    )
     parser.add_argument("--quiet", action="store_true")
 
     args = parser.parse_args(argv)
@@ -38,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
         set_permissions(args.permissions)
     if args.workspace_root:
         set_workspace_root(args.workspace_root)
+    if args.no_common_knowledge:
+        set_common_knowledge(False)
 
     ws = run_prompt(args.prompt, workspace=args.workspace, quiet=args.quiet)
     print(f"\n[vibedev] done. workspace: {ws}", file=sys.stderr)

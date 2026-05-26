@@ -35,7 +35,7 @@ vibedev "build a hello-world flask app"
 
 ## Public API (how users use vibedev)
 
-The package exposes exactly six names from `vibedev/__init__.py`:
+The package exposes exactly seven names from `vibedev/__init__.py`:
 
 ```python
 import vibedev
@@ -44,6 +44,7 @@ vibedev.set_permissions("bypassPermissions")    # or acceptEdits / default / pla
 vibedev.set_model("claude-opus-4-7")            # any model ID the Claude CLI accepts
 vibedev.set_workspace_root("./vibedev-output")  # where projects land
 vibedev.set_team(["developer", "tester"])       # opt into team mode (see "Team mode" below)
+vibedev.set_common_knowledge(False)             # optional: skip generated common knowledge
 
 workspace = vibedev.prompt(
     "build a hello-world flask app that returns JSON from /hello",
@@ -54,7 +55,7 @@ workspace = vibedev.prompt(
 vibedev.get_config()  # returns a copy of the current config dict
 ```
 
-Mental model: the four `set_*` calls mutate module-level state. The next
+Mental model: the `set_*` calls mutate module-level state. The next
 `prompt()` reads whatever was last set. There's no `Vibedev` class, no context
 manager, no per-call config object — global state is the deliberate UX, since
 script-driven users want to configure once and fire many prompts.
@@ -68,10 +69,11 @@ the workspace, so the caller can open / inspect the generated code afterwards.
 (currently `"business_analyst"`, `"developer"`, and `"tester"`). When developer
 and tester are configured, Python owns the lifecycle: read/create
 `.vibedev/plan.md`, append the current request as a pending task when needed,
-write a draft `.vibedev/common_knowledge.md`, run an internal ad hoc
-`knowledge_curator` to inspect the workspace and return code-structure context
-only, rewrite common knowledge with that report, pass agents a pointer to that
-file, optionally run the business analyst against the current plan, append
+optionally write a draft `.vibedev/common_knowledge.md`, optionally run an
+internal ad hoc `knowledge_curator` to inspect the workspace and return
+code-structure context only, rewrite common knowledge with that report, pass
+agents a pointer to that file when enabled, optionally run the business analyst
+against the current plan, append
 analyst-proposed tasks, pick the next `[ ]` task, run developer, run tester,
 parse the tester’s
 `VIBEDEV_VERDICT`, send failures back to the developer, and mark `[x]` only
@@ -108,6 +110,11 @@ The model string is passed straight to the SDK, so aliases (`"haiku"`,
 inherit the main model from `set_model(...)`; tuple entries override just
 that role.
 
+**Common knowledge.** `set_common_knowledge(False)` disables generated
+`.vibedev/common_knowledge.md` in coded team mode. When disabled, Python skips
+the internal `knowledge_curator` stage and omits the common-knowledge pointer
+from role prompts. The default is `True`.
+
 When `set_team([])` (the default), team mode is off entirely: the main agent
 runs the single-orchestrator prompt (`ORCHESTRATOR_SYSTEM_PROMPT`) and no
 subagents are exposed. The non-team path is preserved bit-for-bit.
@@ -118,7 +125,7 @@ completion before Python advances to the next step.
 
 ### CLI mirror
 
-`vibedev "<prompt>" [--model ...] [--permissions ...] [--workspace-root ...] [--workspace ...] [--quiet]`
+`vibedev "<prompt>" [--model ...] [--permissions ...] [--workspace-root ...] [--workspace ...] [--quiet] [--no-common-knowledge]`
 is just an argparse wrapper that calls the same `set_*` functions and then
 `core.prompt`. The flags do not have separate semantics from the Python API.
 
@@ -146,7 +153,8 @@ The package is intentionally small — six modules under `src/vibedev/`:
 - **`config.py`** — owns a single module-level dict (`_config`) and the `set_*`
   setters that mutate it. State is global on purpose (see "Public API" above).
   `set_permissions` validates against `_VALID_PERMISSIONS`; `set_model` /
-  `set_workspace_root` reject empty strings; `set_team` validates against
+  `set_workspace_root` reject empty strings; `set_common_knowledge` validates
+  the generated-common-knowledge boolean toggle; `set_team` validates against
   `_VALID_SUBAGENT_ROLES`, rejects `"manager"` explicitly, and de-dupes while
   preserving order. `get_config()` returns a **copy** (`dict(_config)` plus a
   fresh copy of the inner `team` list) so callers cannot bypass the setters
@@ -189,8 +197,8 @@ The package is intentionally small — six modules under `src/vibedev/`:
   developer+tester teams use the coded lifecycle in
   `_run_coded_team_workflow`; solo mode uses `ORCHESTRATOR_SYSTEM_PROMPT`;
   other team shapes use the fallback SDK-native manager prompt.
-  `_run_coded_team_workflow` owns plan creation/parsing/writing, common
-  knowledge generation, optional analyst review, task selection, checkoff,
+  `_run_coded_team_workflow` owns plan creation/parsing/writing, optional
+  common knowledge generation, optional analyst review, task selection, checkoff,
   blocker recording, and the dev/test retry policy. Every
   `claude_agent_sdk.query(...)` message is fanned out to (a) a
   `_TranscriptLogger` writing to `<workspace>.vibedev-logs/<UTC>.log` (a
@@ -218,7 +226,7 @@ The package is intentionally small — six modules under `src/vibedev/`:
 3. `anyio.run(_run, ...)` bridges sync→async.
 4. `_run` chooses solo, coded developer+tester team mode, or fallback manager
    mode based on config.
-5. In coded team mode, Python updates `.vibedev/plan.md`, runs the ad hoc
+5. In coded team mode, Python updates `.vibedev/plan.md`, optionally runs the ad hoc
    knowledge curator to enrich `.vibedev/common_knowledge.md`, sends one
    pending task through developer/tester `query(...)` calls, and updates plan
    state from the tester verdict.
@@ -232,9 +240,9 @@ The package is intentionally small — six modules under `src/vibedev/`:
 ### Multi-agent layering: coded lifecycle, SDK execution
 
 vibedev owns the high-level team lifecycle in Python when both `developer`
-and `tester` are configured. It reads/writes `.vibedev/plan.md`, writes
-`.vibedev/common_knowledge.md` with code-structure context from the internal
-knowledge curator, optionally runs `business_analyst` to challenge the plan and
+and `tester` are configured. It reads/writes `.vibedev/plan.md`, optionally
+writes `.vibedev/common_knowledge.md` with code-structure context from the
+internal knowledge curator, optionally runs `business_analyst` to challenge the plan and
 propose tasks, selects the next pending task, runs the developer agent, runs
 the tester agent, parses the tester’s `VIBEDEV_VERDICT`, sends failures back to
 the developer, marks the task complete only after tester pass, and records
@@ -272,11 +280,13 @@ The contract:
   current plan, and the common knowledge path/purpose to the analyst, parses only
   `## Proposed Tasks` for plan additions, and passes the full analyst brief
   into developer/tester prompts as acceptance context.
-- **Common knowledge**: Python writes `.vibedev/common_knowledge.md` with the
-  project goal, current request, plan summary, docs, tests, notable files, and
-  workflow rules. Its path and purpose are injected into
-  analyst/developer/tester/README-updater prompts; the full contents are not
-  injected, so agents can read the file only when useful.
+- **Common knowledge**: when enabled, Python writes
+  `.vibedev/common_knowledge.md` with the project goal, current request, plan
+  summary, docs, tests, notable files, and workflow rules. Its path and purpose
+  are injected into analyst/developer/tester/README-updater prompts; the full
+  contents are not injected, so agents can read the file only when useful.
+  `set_common_knowledge(False)` and `--no-common-knowledge` disable this file
+  and the curator stage.
 - **Team checkoff**: Python flips a task to `[x]` only after the tester returns
   `VIBEDEV_VERDICT: PASS`; repeated failures leave the task `[ ]` and append a
   blocker to `## History`.

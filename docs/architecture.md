@@ -9,7 +9,7 @@ owns tool execution, file editing, shell commands, and model interaction.
 
 ## Public Surface
 
-The package exports six names:
+The package exports seven names:
 
 ```python
 prompt
@@ -17,6 +17,7 @@ set_permissions
 set_model
 set_workspace_root
 set_team
+set_common_knowledge
 get_config
 ```
 
@@ -77,18 +78,20 @@ The coded flow is:
 1. Load or create `.vibedev/plan.md`.
 2. Append the current user prompt as a pending task if it is not already in the
    plan.
-3. Write a draft `.vibedev/common_knowledge.md` with shared workspace context.
-4. Run the ad hoc knowledge curator so it can inspect the workspace and return
-   code-structure context.
-5. Rewrite `.vibedev/common_knowledge.md` with the curator report included.
+3. If common knowledge is enabled, write a draft
+   `.vibedev/common_knowledge.md` with shared workspace context.
+4. If common knowledge is enabled, run the ad hoc knowledge curator so it can
+   inspect the workspace and return code-structure context.
+5. If common knowledge is enabled, rewrite `.vibedev/common_knowledge.md` with
+   the curator report included.
 6. If `business_analyst` exists, run it against the user request, current
    plan, and a pointer to the common knowledge file.
 7. Parse the analyst's `## Proposed Tasks` section and append missing tasks to
    the Python-owned plan.
-8. Refresh common knowledge after analyst plan changes, preserving the curator
-   report.
-9. Pass the common knowledge path/purpose and the analyst brief to developer
-   and tester as context.
+8. If common knowledge is enabled, refresh it after analyst plan changes,
+   preserving the curator report.
+9. Pass the common knowledge path/purpose (when enabled) and the analyst brief
+   to developer and tester as context.
 10. Select the first pending task.
 11. Run the developer agent on that task.
 12. Run the tester agent on the developer report.
@@ -121,7 +124,7 @@ is passed into developer and tester prompts as acceptance context.
 
 ## Common Knowledge
 
-Normal team mode writes:
+Normal team mode writes common knowledge by default:
 
 ```text
 <workspace>/.vibedev/common_knowledge.md
@@ -152,6 +155,11 @@ Python injects the common knowledge path and purpose into business analyst,
 developer, tester, and README-updater prompts. It does not inject the full file
 contents. Agents can decide when they need to read it, which keeps prompts
 small and makes the file itself the source of shared context.
+
+Users can disable this with `set_common_knowledge(False)` or the CLI flag
+`--no-common-knowledge`. When disabled, vibedev does not write
+`.vibedev/common_knowledge.md`, does not run the knowledge curator, and omits
+the common-knowledge pointer from role prompts.
 
 ## Fallback Manager Mode
 
@@ -216,6 +224,7 @@ The smoke suite currently covers:
 
 - public API exports
 - config setters and validation
+- common knowledge enable/disable behavior
 - workspace creation
 - team duplicates and per-role models
 - business analyst role validation

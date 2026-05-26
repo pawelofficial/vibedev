@@ -11,6 +11,7 @@ with ``bypassPermissions`` mode. Override with the ``set_*`` configurators.
 
 from vibedev.config import (
     get_config,
+    set_common_knowledge,
     set_model,
     set_permissions,
     set_team,
@@ -24,6 +25,7 @@ __all__ = [
     "set_model",
     "set_workspace_root",
     "set_team",
+    "set_common_knowledge",
     "get_config",
 ]
 

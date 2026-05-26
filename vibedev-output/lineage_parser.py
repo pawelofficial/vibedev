@@ -1,8 +1,11 @@
 """
 Column-level lineage parser for SQL DDL (CREATE TABLE / CREATE VIEW).
 
-This is a pragmatic parser tailored to PostgreSQL-style DDL as found in
-schema.txt. It handles:
+Primary parsing uses sqlglot for robust AST-based extraction.
+Falls back to regex-based parsing per-statement when sqlglot cannot handle
+a particular construct.
+
+Handles:
 - Direct passthrough columns
 - Aliases and renamed columns
 - Casts (::TYPE)
@@ -16,13 +19,24 @@ schema.txt. It handles:
 - Window functions (OVER (...))
 - Views depending on other views
 - SELECT * expansion
+- dbt Jinja templates ({{ source(...) }}, {{ ref(...) }})
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple, Optional
+
+try:
+    import sqlglot
+    from sqlglot import exp as sqlglot_exp
+    _HAS_SQLGLOT = True
+except ImportError:
+    _HAS_SQLGLOT = False
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -44,87 +58,371 @@ class Model:
     column_lineage: Dict[str, ColumnLineage] = field(default_factory=dict)
 
 
+# ---------------------------------------------------------------------------
+# dbt Jinja preprocessing
+# ---------------------------------------------------------------------------
+
+def _preprocess_dbt_templates(sql_text: str) -> str:
+    """Replace dbt Jinja template calls with plain SQL table references.
+
+    Handles:
+    - {{ source('schema', 'table') }} -> table
+    - {{ ref('model') }} -> model
+
+    Only simple string-argument forms are supported.  Whitespace variations
+    inside the braces are tolerated.  Jinja filters, conditionals, and
+    whitespace-control tags ({%- -%}) are NOT handled – those require a
+    full Jinja renderer.
+    """
+    # {{ source('schema', 'table') }} -> table
+    sql_text = re.sub(
+        r"\{\{\s*source\s*\(\s*['\"](\w+)['\"]\s*,\s*['\"](\w+)['\"]\s*\)\s*\}\}",
+        r'\2',
+        sql_text,
+    )
+    # {{ ref('model') }} -> model
+    sql_text = re.sub(
+        r"\{\{\s*ref\s*\(\s*['\"](\w+)['\"]\s*\)\s*\}\}",
+        r'\1',
+        sql_text,
+    )
+    return sql_text
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
 def parse_schema(sql_text: str) -> Dict[str, Model]:
-    """Parse the full SQL schema text and return a dict of model_name -> Model."""
+    """Parse the full SQL schema text and return a dict of model_name -> Model.
+
+    Uses sqlglot for robust AST-based parsing when available.  Falls back to
+    regex extraction per-statement when sqlglot cannot parse a construct.
+    """
+    # Preprocess dbt Jinja templates before any parsing
+    sql_text = _preprocess_dbt_templates(sql_text)
+
+    if _HAS_SQLGLOT:
+        return _parse_schema_sqlglot(sql_text)
+    else:
+        logger.warning("sqlglot not installed; falling back to regex parser")
+        return _parse_schema_regex(sql_text)
+
+
+# =========================================================================
+# sqlglot-based parser (primary)
+# =========================================================================
+
+def _parse_schema_sqlglot(sql_text: str) -> Dict[str, Model]:
+    """Parse the schema using sqlglot as the primary parser."""
     models: Dict[str, Model] = {}
 
-    # Extract CREATE TABLE statements
-    table_pattern = re.compile(
-        r'CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);',
-        re.DOTALL | re.IGNORECASE
-    )
-    for match in table_pattern.finditer(sql_text):
-        table_name = match.group(1).lower()
-        body = match.group(2)
-        columns = _parse_table_columns(body)
-        model = Model(name=table_name, model_type='table', columns=columns)
-        # Base table columns have no upstream lineage
-        for col in columns:
-            model.column_lineage[col] = ColumnLineage(
-                model=table_name, column=col, upstream=[], expression=col
-            )
-        models[table_name] = model
+    try:
+        stmts = sqlglot.parse(sql_text, dialect='postgres')
+    except Exception:
+        logger.warning("sqlglot failed to parse schema; falling back to regex parser")
+        return _parse_schema_regex(sql_text)
 
-    # Extract CREATE VIEW statements (order matters - views can depend on earlier views)
-    view_pattern = re.compile(
-        r'CREATE\s+VIEW\s+(\w+)\s+AS\s+(.*?);(?=\s*(?:--|CREATE|DROP|$))',
-        re.DOTALL | re.IGNORECASE
-    )
-    for match in view_pattern.finditer(sql_text):
-        view_name = match.group(1).lower()
-        view_sql = match.group(2).strip()
-        model = _parse_view(view_name, view_sql, models)
-        models[view_name] = model
+    for stmt in stmts:
+        if stmt is None:
+            continue
+
+        # Skip DROP statements
+        if isinstance(stmt, sqlglot_exp.Drop):
+            continue
+
+        if not isinstance(stmt, sqlglot_exp.Create):
+            continue
+
+        try:
+            _process_create_stmt_sqlglot(stmt, models)
+        except Exception:
+            # Per-statement fallback: extract this statement's SQL and
+            # try the regex parser on it individually
+            try:
+                stmt_sql = stmt.sql(dialect='postgres')
+                _parse_single_statement_regex(stmt_sql, models)
+                logger.info("sqlglot fallback to regex for statement: %s",
+                            stmt_sql[:80])
+            except Exception:
+                logger.warning("Both sqlglot and regex failed for a statement")
 
     return models
 
 
-def _parse_table_columns(body: str) -> List[str]:
-    """Extract column names from a CREATE TABLE body."""
-    columns = []
-    for line in body.split('\n'):
-        line = line.strip().rstrip(',')
-        if not line:
-            continue
-        # Skip constraints
-        if re.match(r'^\s*(PRIMARY|FOREIGN|UNIQUE|CHECK|CONSTRAINT|REFERENCES)', line, re.IGNORECASE):
-            continue
-        # Extract column name (first word)
-        col_match = re.match(r'(\w+)\s+', line)
-        if col_match:
-            col_name = col_match.group(1).lower()
-            # Skip SQL keywords that might appear
-            if col_name.upper() not in ('PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK', 'CONSTRAINT', 'INDEX'):
-                columns.append(col_name)
-    return columns
+def _process_create_stmt_sqlglot(stmt: sqlglot_exp.Create, models: Dict[str, Model]):
+    """Process a single CREATE TABLE or CREATE VIEW statement via sqlglot."""
+    kind = stmt.kind  # 'TABLE' or 'VIEW'
+    tbl_node = stmt.find(sqlglot_exp.Table)
+    if tbl_node is None:
+        return
+
+    name = tbl_node.name.lower()
+
+    if kind and kind.upper() == 'TABLE':
+        _process_create_table_sqlglot(stmt, name, models)
+    elif kind and kind.upper() == 'VIEW':
+        _process_create_view_sqlglot(stmt, name, models)
 
 
-def _parse_view(view_name: str, view_sql: str, models: Dict[str, Model]) -> Model:
-    """Parse a CREATE VIEW statement and extract column lineage.
-    CTEs are resolved transparently - the final view's lineage references
-    only real tables/views, not internal CTEs."""
+def _process_create_table_sqlglot(
+    stmt: sqlglot_exp.Create, table_name: str, models: Dict[str, Model]
+):
+    """Extract columns from a CREATE TABLE statement using sqlglot AST."""
+    schema_node = stmt.find(sqlglot_exp.Schema)
+    if schema_node is None:
+        return
+
+    columns: List[str] = []
+    for col_def in schema_node.find_all(sqlglot_exp.ColumnDef):
+        col_name = col_def.name.lower()
+        columns.append(col_name)
+
+    model = Model(name=table_name, model_type='table', columns=columns)
+    for col in columns:
+        model.column_lineage[col] = ColumnLineage(
+            model=table_name, column=col, upstream=[], expression=col
+        )
+    models[table_name] = model
+
+
+def _process_create_view_sqlglot(
+    stmt: sqlglot_exp.Create, view_name: str, models: Dict[str, Model]
+):
+    """Extract column lineage from a CREATE VIEW statement using sqlglot AST."""
+    body = stmt.expression  # The SELECT (possibly with CTEs)
+    if body is None:
+        return
+
     # Parse CTEs
-    ctes, main_query = _parse_ctes(view_sql)
-
-    # Build CTE models (internal, for resolution only)
     cte_models: Dict[str, Model] = {}
     all_available = dict(models)
 
-    for cte_name, cte_sql in ctes:
-        cte_model = _parse_subquery_as_model(cte_name, cte_sql, all_available, cte_models)
-        cte_models[cte_name] = cte_model
-        all_available[cte_name] = cte_model
+    if hasattr(body, 'ctes') and body.ctes:
+        for cte_node in body.ctes:
+            cte_name = cte_node.alias.lower()
+            cte_body = cte_node.this  # The CTE's SELECT / UNION
+            cte_model = _parse_sqlglot_select_tree(cte_name, cte_body, all_available)
+            cte_models[cte_name] = cte_model
+            all_available[cte_name] = cte_model
 
-    # Parse the main SELECT with CTEs available
-    available_models = dict(all_available)
-    model = _parse_select_as_model(view_name, main_query, available_models)
+    # Parse the main SELECT
+    model = _parse_sqlglot_select_tree(view_name, body, all_available)
     model.model_type = 'view'
 
     # Resolve CTE references through to real models
     _resolve_cte_references(model, cte_models, models)
 
+    models[view_name] = model
+
+
+def _parse_sqlglot_select_tree(
+    name: str,
+    node,  # Select | Union
+    models: Dict[str, Model],
+) -> Model:
+    """Parse a SELECT or UNION node from the sqlglot AST into a Model."""
+    if isinstance(node, sqlglot_exp.Union):
+        return _parse_sqlglot_union(name, node, models)
+    elif isinstance(node, sqlglot_exp.Select):
+        return _parse_sqlglot_select(name, node, models)
+    else:
+        # Unknown node type – return empty model
+        return Model(name=name, model_type='view')
+
+
+def _parse_sqlglot_union(
+    name: str,
+    union_node: sqlglot_exp.Union,
+    models: Dict[str, Model],
+) -> Model:
+    """Parse a UNION ALL node, merging lineage from all branches."""
+    model = Model(name=name, model_type='view')
+
+    # Collect all branches (UNION can be nested: (A UNION B) UNION C)
+    branches = []
+    _collect_union_branches(union_node, branches)
+
+    branch_models = []
+    for branch in branches:
+        # Each branch may have its own CTEs
+        available = dict(models)
+        if hasattr(branch, 'ctes') and branch.ctes:
+            for cte_node in branch.ctes:
+                cte_name = cte_node.alias.lower()
+                cte_body = cte_node.this
+                cte_model = _parse_sqlglot_select_tree(cte_name, cte_body, available)
+                available[cte_name] = cte_model
+
+        bm = _parse_sqlglot_select(f"{name}__branch", branch, available)
+        branch_models.append(bm)
+
+    if not branch_models:
+        return model
+
+    # Use first branch for column names, merge lineage from all branches
+    first = branch_models[0]
+    model.columns = list(first.columns)
+    for i, col in enumerate(model.columns):
+        upstream: List[Tuple[str, str]] = []
+        for branch in branch_models:
+            if i < len(branch.columns):
+                branch_col = branch.columns[i]
+                if branch_col in branch.column_lineage:
+                    upstream.extend(branch.column_lineage[branch_col].upstream)
+            elif col in branch.column_lineage:
+                upstream.extend(branch.column_lineage[col].upstream)
+        # Deduplicate
+        seen: Set[Tuple[str, str]] = set()
+        deduped: List[Tuple[str, str]] = []
+        for item in upstream:
+            if item not in seen:
+                seen.add(item)
+                deduped.append(item)
+        expr = first.column_lineage.get(col, ColumnLineage(name, col, [])).expression
+        model.column_lineage[col] = ColumnLineage(
+            model=name, column=col, upstream=deduped,
+            expression=expr, is_derived=len(deduped) > 1
+        )
+
     return model
 
+
+def _collect_union_branches(node, branches: list):
+    """Flatten a possibly nested UNION tree into a list of SELECT nodes."""
+    if isinstance(node, sqlglot_exp.Union):
+        _collect_union_branches(node.left, branches)
+        _collect_union_branches(node.right, branches)
+    elif isinstance(node, sqlglot_exp.Select):
+        branches.append(node)
+    # Subquery wrapping
+    elif isinstance(node, sqlglot_exp.Subquery):
+        inner = node.this
+        _collect_union_branches(inner, branches)
+
+
+def _parse_sqlglot_select(
+    name: str,
+    select_node: sqlglot_exp.Select,
+    models: Dict[str, Model],
+) -> Model:
+    """Parse a single SELECT statement into a Model using sqlglot AST."""
+    model = Model(name=name, model_type='view')
+
+    # Handle CTEs within this SELECT
+    available = dict(models)
+    cte_models_local: Dict[str, Model] = {}
+    if hasattr(select_node, 'ctes') and select_node.ctes:
+        for cte_node in select_node.ctes:
+            cte_name = cte_node.alias.lower()
+            cte_body = cte_node.this
+            cte_model = _parse_sqlglot_select_tree(cte_name, cte_body, available)
+            cte_models_local[cte_name] = cte_model
+            available[cte_name] = cte_model
+
+    # Extract FROM/JOIN aliases
+    aliases = _extract_aliases_sqlglot(select_node)
+
+    # Extract SELECT expressions
+    for col_expr in select_node.expressions:
+        # Handle SELECT *
+        if isinstance(col_expr, sqlglot_exp.Star):
+            _expand_star(model, aliases, available)
+            continue
+
+        # Determine column name
+        col_name = _get_column_name_sqlglot(col_expr)
+        if not col_name:
+            continue
+
+        model.columns.append(col_name)
+
+        # Extract column references from the expression
+        upstream = _extract_column_refs_sqlglot(col_expr, aliases, available)
+        expr_sql = col_expr.sql(dialect='postgres') if hasattr(col_expr, 'sql') else str(col_expr)
+        model.column_lineage[col_name] = ColumnLineage(
+            model=name, column=col_name, upstream=upstream,
+            expression=expr_sql,
+            is_derived=len(upstream) > 1
+        )
+
+    return model
+
+
+def _extract_aliases_sqlglot(select_node: sqlglot_exp.Select) -> Dict[str, str]:
+    """Extract table/view aliases from FROM and JOIN clauses using sqlglot AST."""
+    aliases: Dict[str, str] = {}
+
+    # FROM clause
+    from_node = select_node.find(sqlglot_exp.From)
+    if from_node:
+        for tbl in from_node.find_all(sqlglot_exp.Table):
+            tbl_name = tbl.name.lower()
+            alias = tbl.alias.lower() if tbl.alias else tbl_name
+            aliases[alias] = tbl_name
+
+    # JOIN clauses
+    joins = select_node.args.get('joins') or []
+    for join in joins:
+        tbl = join.find(sqlglot_exp.Table)
+        if tbl:
+            tbl_name = tbl.name.lower()
+            alias = tbl.alias.lower() if tbl.alias else tbl_name
+            aliases[alias] = tbl_name
+
+    return aliases
+
+
+def _get_column_name_sqlglot(col_expr) -> Optional[str]:
+    """Determine the output column name from a sqlglot expression node."""
+    # If it has an explicit alias
+    if hasattr(col_expr, 'alias') and col_expr.alias:
+        return col_expr.alias.lower()
+
+    # If it's a Column reference (simple passthrough)
+    if isinstance(col_expr, sqlglot_exp.Column):
+        return col_expr.name.lower()
+
+    # Try to infer from the expression
+    if isinstance(col_expr, sqlglot_exp.Cast):
+        inner = col_expr.this
+        if isinstance(inner, sqlglot_exp.Column):
+            return inner.name.lower()
+
+    return None
+
+
+def _extract_column_refs_sqlglot(
+    col_expr,
+    aliases: Dict[str, str],
+    models: Dict[str, Model],
+) -> List[Tuple[str, str]]:
+    """Extract all (model, column) references from a sqlglot expression node."""
+    sources: Set[Tuple[str, str]] = set()
+
+    for col_ref in col_expr.find_all(sqlglot_exp.Column):
+        col_name = col_ref.name.lower()
+        table_alias = col_ref.table.lower() if col_ref.table else None
+
+        if table_alias and table_alias in aliases:
+            real_model = aliases[table_alias]
+            sources.add((real_model, col_name))
+        elif table_alias:
+            # Unknown alias – record as-is
+            sources.add((table_alias, col_name))
+        else:
+            # Bare column reference – try to find in available models
+            for alias_key, model_name in aliases.items():
+                if model_name in models and col_name in models[model_name].columns:
+                    sources.add((model_name, col_name))
+                    break
+
+    return sorted(sources)
+
+
+# =========================================================================
+# CTE resolution (shared between sqlglot and regex paths)
+# =========================================================================
 
 def _resolve_cte_references(model: Model, cte_models: Dict[str, Model], real_models: Dict[str, Model]):
     """Replace CTE upstream references with their own upstream sources (transitively).
@@ -222,6 +520,153 @@ def _get_fallback_column(cte: Model, source_table: str, real_model_names: Set[st
                 return c
     # If nothing found, just use the first column from any link to that table
     return None
+
+
+# =========================================================================
+# Star expansion (shared)
+# =========================================================================
+
+def _expand_star(model: Model, aliases: Dict[str, str], models: Dict[str, Model]):
+    """Expand SELECT * by pulling columns from all source models."""
+    for alias, model_name in aliases.items():
+        if model_name in models:
+            source_model = models[model_name]
+            for col in source_model.columns:
+                if col not in model.columns:
+                    model.columns.append(col)
+                    # Lineage: this column comes from the source model
+                    source_lineage = source_model.column_lineage.get(col)
+                    if source_lineage and source_lineage.upstream:
+                        model.column_lineage[col] = ColumnLineage(
+                            model=model.name, column=col,
+                            upstream=list(source_lineage.upstream),
+                            expression=col,
+                            is_derived=source_lineage.is_derived
+                        )
+                    else:
+                        model.column_lineage[col] = ColumnLineage(
+                            model=model.name, column=col,
+                            upstream=[(model_name, col)],
+                            expression=col,
+                            is_derived=False
+                        )
+
+
+# =========================================================================
+# Regex-based parser (fallback)
+# =========================================================================
+
+def _parse_schema_regex(sql_text: str) -> Dict[str, Model]:
+    """Parse the full SQL schema text using regex only (fallback path)."""
+    models: Dict[str, Model] = {}
+
+    # Extract CREATE TABLE statements
+    table_pattern = re.compile(
+        r'CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);',
+        re.DOTALL | re.IGNORECASE
+    )
+    for match in table_pattern.finditer(sql_text):
+        table_name = match.group(1).lower()
+        body = match.group(2)
+        columns = _parse_table_columns_regex(body)
+        model = Model(name=table_name, model_type='table', columns=columns)
+        # Base table columns have no upstream lineage
+        for col in columns:
+            model.column_lineage[col] = ColumnLineage(
+                model=table_name, column=col, upstream=[], expression=col
+            )
+        models[table_name] = model
+
+    # Extract CREATE VIEW statements (order matters - views can depend on earlier views)
+    view_pattern = re.compile(
+        r'CREATE\s+VIEW\s+(\w+)\s+AS\s+(.*?);(?=\s*(?:--|CREATE|DROP|$))',
+        re.DOTALL | re.IGNORECASE
+    )
+    for match in view_pattern.finditer(sql_text):
+        view_name = match.group(1).lower()
+        view_sql = match.group(2).strip()
+        model = _parse_view_regex(view_name, view_sql, models)
+        models[view_name] = model
+
+    return models
+
+
+def _parse_single_statement_regex(stmt_sql: str, models: Dict[str, Model]):
+    """Parse a single CREATE TABLE/VIEW statement via regex and add to models."""
+    table_pattern = re.compile(
+        r'CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);?',
+        re.DOTALL | re.IGNORECASE
+    )
+    m = table_pattern.search(stmt_sql)
+    if m:
+        table_name = m.group(1).lower()
+        body = m.group(2)
+        columns = _parse_table_columns_regex(body)
+        model = Model(name=table_name, model_type='table', columns=columns)
+        for col in columns:
+            model.column_lineage[col] = ColumnLineage(
+                model=table_name, column=col, upstream=[], expression=col
+            )
+        models[table_name] = model
+        return
+
+    view_pattern = re.compile(
+        r'CREATE\s+VIEW\s+(\w+)\s+AS\s+(.*?)(?:;|$)',
+        re.DOTALL | re.IGNORECASE
+    )
+    m = view_pattern.search(stmt_sql)
+    if m:
+        view_name = m.group(1).lower()
+        view_sql = m.group(2).strip()
+        model = _parse_view_regex(view_name, view_sql, models)
+        models[view_name] = model
+
+
+def _parse_table_columns_regex(body: str) -> List[str]:
+    """Extract column names from a CREATE TABLE body using regex."""
+    columns = []
+    for line in body.split('\n'):
+        line = line.strip().rstrip(',')
+        if not line:
+            continue
+        # Skip constraints
+        if re.match(r'^\s*(PRIMARY|FOREIGN|UNIQUE|CHECK|CONSTRAINT|REFERENCES)', line, re.IGNORECASE):
+            continue
+        # Extract column name (first word)
+        col_match = re.match(r'(\w+)\s+', line)
+        if col_match:
+            col_name = col_match.group(1).lower()
+            # Skip SQL keywords that might appear
+            if col_name.upper() not in ('PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK', 'CONSTRAINT', 'INDEX'):
+                columns.append(col_name)
+    return columns
+
+
+def _parse_view_regex(view_name: str, view_sql: str, models: Dict[str, Model]) -> Model:
+    """Parse a CREATE VIEW statement using regex and extract column lineage.
+    CTEs are resolved transparently - the final view's lineage references
+    only real tables/views, not internal CTEs."""
+    # Parse CTEs
+    ctes, main_query = _parse_ctes(view_sql)
+
+    # Build CTE models (internal, for resolution only)
+    cte_models: Dict[str, Model] = {}
+    all_available = dict(models)
+
+    for cte_name, cte_sql in ctes:
+        cte_model = _parse_subquery_as_model(cte_name, cte_sql, all_available, cte_models)
+        cte_models[cte_name] = cte_model
+        all_available[cte_name] = cte_model
+
+    # Parse the main SELECT with CTEs available
+    available_models = dict(all_available)
+    model = _parse_select_as_model(view_name, main_query, available_models)
+    model.model_type = 'view'
+
+    # Resolve CTE references through to real models
+    _resolve_cte_references(model, cte_models, models)
+
+    return model
 
 
 def _parse_ctes(sql: str) -> Tuple[List[Tuple[str, str]], str]:
@@ -402,32 +847,6 @@ def _parse_select_as_model(name: str, sql: str, models: Dict[str, Model]) -> Mod
         )
 
     return model
-
-
-def _expand_star(model: Model, aliases: Dict[str, str], models: Dict[str, Model]):
-    """Expand SELECT * by pulling columns from all source models."""
-    for alias, model_name in aliases.items():
-        if model_name in models:
-            source_model = models[model_name]
-            for col in source_model.columns:
-                if col not in model.columns:
-                    model.columns.append(col)
-                    # Lineage: this column comes from the source model
-                    source_lineage = source_model.column_lineage.get(col)
-                    if source_lineage and source_lineage.upstream:
-                        model.column_lineage[col] = ColumnLineage(
-                            model=model.name, column=col,
-                            upstream=list(source_lineage.upstream),
-                            expression=col,
-                            is_derived=source_lineage.is_derived
-                        )
-                    else:
-                        model.column_lineage[col] = ColumnLineage(
-                            model=model.name, column=col,
-                            upstream=[(model_name, col)],
-                            expression=col,
-                            is_derived=False
-                        )
 
 
 def _extract_from_aliases(sql: str, models: Dict[str, Model]) -> Dict[str, str]:
@@ -699,6 +1118,10 @@ def _resolve_bare_columns(
                 sources.add((model_name, ident_lower))
                 break
 
+
+# =========================================================================
+# Public query functions (unchanged from original)
+# =========================================================================
 
 def build_full_lineage(models: Dict[str, Model]) -> Dict[str, Dict[str, ColumnLineage]]:
     """Build complete lineage for all models.

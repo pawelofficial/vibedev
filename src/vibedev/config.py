@@ -7,6 +7,7 @@ Configuration lives on a single private dict and is mutated via the public
     vibedev.set_model("claude-sonnet-4-6")
     vibedev.set_workspace_root("~/projects/vibedev-runs")
     vibedev.set_team(["developer", "tester"])
+    vibedev.set_common_knowledge(False)
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ class Config(TypedDict):
     permission_mode: PermissionMode
     model: str
     workspace_root: str
+    common_knowledge: bool
     # Each entry is (role, model_override). model_override=None means
     # "use the main-agent model from set_model()".
     team: list[tuple[str, str | None]]
@@ -41,6 +43,7 @@ _config: Config = {
     "permission_mode": "bypassPermissions",
     "model": "claude-opus-4-7",
     "workspace_root": "./vibedev-output",
+    "common_knowledge": True,
     "team": [],
 }
 
@@ -63,6 +66,19 @@ def set_workspace_root(path: str) -> None:
     if not isinstance(path, str) or not path:
         raise ValueError("workspace_root must be a non-empty path string")
     _config["workspace_root"] = path
+
+
+def set_common_knowledge(enabled: bool) -> None:
+    """Enable or disable generated common knowledge in coded team mode.
+
+    When enabled (the default), developer+tester team runs write
+    ``.vibedev/common_knowledge.md`` and run the internal knowledge curator.
+    When disabled, vibedev skips both steps and role prompts omit the common
+    knowledge pointer.
+    """
+    if not isinstance(enabled, bool):
+        raise ValueError("common_knowledge must be a boolean")
+    _config["common_knowledge"] = enabled
 
 
 def set_team(roles: list[str | tuple[str, str]]) -> None:

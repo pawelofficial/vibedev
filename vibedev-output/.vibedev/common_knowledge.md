@@ -7,7 +7,7 @@ It captures shared project context; Python owns workflow state in the plan.
 Build a column-lineage web app for the SQL models in schema.txt.
 
 ## Current Request
-Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
+Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 
 ## Important Paths
 - Plan: `.vibedev/plan.md`
@@ -36,58 +36,74 @@ Modularize the Flask backend currently concentrated in `app.py` so the backend i
 - [x] **Remove the "Decide on module layout" task** — commit to the flat peer-module approach (`schema_service.py` and `routes.py` as siblings of `app.py`).
 - [x] **Resolve whether the explicit `static_files` route should be kept or dropped** during the Blueprint extraction.
 - [x] **Add a smoke test that `python app.py` still starts the server** (or at minimum, verify the `if __name__ == '__main__'` block is present and `app` is importable from `app.py`).
+- [ ] Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+- [ ] **Clean up stale plan state**: Mark the 7 pending modularization sub-tasks as complete (the modules `schema_service.py`, `routes.py`, and the slim `app.py` already exist and pass tests), so the developer starts with a clean task list.
+- [ ] **Add `sqlglot` to `requirements.txt`**: Add `sqlglot>=26.0` as a dependency.
+- [ ] **Implement a dbt Jinja preprocessor function**: Create a `_preprocess_dbt_templates(sql_text: str) -> str` function (in `lineage_parser.py` or a new `dbt_preprocessor.py`) that regex-replaces `{{ source('schema', 'table') }}` → `table` (o...
+- [ ] **Implement sqlglot-based statement extraction**: Replace the two top-level regexes in `parse_schema()` — the CREATE TABLE regex (`r'CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);'`) and the CREATE VIEW regex (`r'CREATE\s+VIEW\s+(\w+)\s+AS\s+(.*?);(?...
+- [ ] **Implement sqlglot-based CREATE TABLE column extraction**: Replace `_parse_table_columns()` regex logic with `sqlglot` AST traversal to extract column names from `CREATE TABLE` statements.
+- [ ] **Implement sqlglot-based CREATE VIEW body parsing**: Replace the manual CTE parser (`_parse_ctes`), FROM/JOIN alias extractor (`_extract_from_aliases`), SELECT expression extractor (`_extract_select_expressions`), and column reference res...
+- [ ] **Update hardcoded test assertions for known parser limitations**: Update `test_lineage.py::TestBaseTableParsing::test_all_tables_found` (5 → 6 tables, add `nosuchtable`), `test_all_views_found` (5 → 8 views), `TestGraphStructure::test_gra...
+- [ ] **Update `static/app.js` `MODEL_LAYERS`**: Add layer assignments for `rpt_customer_growth_cohorts`, `mart_segment_health_snapshot`, `rpt_executive_revenue_dashboard`, and `nosuchtable` so the new models render correctly in the DAG layout.
+- [ ] **Add focused sqlglot parser tests**: Add a new test class (or file `tests/test_sqlglot_parser.py`) with tests proving sqlglot handles: (a) nested CTEs (views 6–8), (b) UNION ALL lineage merging (view 4), (c) window functions with PARTITIO...
+- [ ] **Add dbt syntax parsing tests**: Add tests proving `{{ source('raw', 'orders') }}` resolves to the correct table reference and `{{ ref('stg_orders_enriched') }}` resolves to the correct view reference.
+- [ ] **Add fallback-path tests**: Add tests that feed deliberately malformed SQL (or a dialect sqlglot doesn't support) and verify the regex fallback produces the same output as the current parser.
+- [ ] **Run full pytest suite and fix regressions**: Execute `python -m pytest tests/ -v` and fix all failures introduced by the refactor.
+- [ ] **Update `README.md`**: Add `sqlglot` to the Setup/Install section, document the new parser capabilities (dbt syntax, all 8 views now parsed), update the test count, and note the sqlglot+regex-fallback architecture under the Parser section.
 
 ## Recent Plan History
-- 2026-05-24 - Request: Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
-- 2026-05-24 - Analyst review: Let me examine the current codebase to understand what's in `app.py` and the existing test structure before I can provide a thorough analysis. Now I have a complete picture of the codebase. Let me provide my analysis. --- ## Missing Requirements - **Target module layout is unspecified.** T...
-- 2026-05-25 - Request: Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
 - 2026-05-25 - Analyst review: Let me examine the current codebase to understand the existing structure before providing my analysis. Now let me check how `test_lineage.py` handles imports, and also verify if there's a `conftest.py`: Now I have a complete picture of the codebase. Here is my analysis: --- ## Missing Requ...
 - 2026-05-25 - Completed: Modularize the Flask backend currently concentrated in `app.py` so the backend is easier to maintain and extend.
 - 2026-05-25 - Completed: **Remove the "Decide on module layout" task** — commit to the flat peer-module approach (`schema_service.py` and `routes.py` as siblings of `app.py`).
 - 2026-05-25 - Completed: **Resolve whether the explicit `static_files` route should be kept or dropped** during the Blueprint extraction.
 - 2026-05-25 - Completed: **Add a smoke test that `python app.py` still starts the server** (or at minimum, verify the `if __name__ == '__main__'` block is present and `app` is importable from `app.py`).
+- 2026-05-25 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+- 2026-05-26 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+- 2026-05-26 - Analyst review: Let me first examine the existing codebase to understand the current parser, schema, tests, and dependencies before challenging the plan. Now I have a thorough understanding of the codebase. Let me compile my analysis. ## Missing Requirements - **dbt Jinja preprocessing strategy is undefin...
 
 ## Curated Project Context
-Now let me read the test files and the frontend files:
-Now let me read the frontend files and the README:
-Now let me check the `.vibedev/` directory for any additional files:
-I have a complete picture of the workspace. Here is my report:
-
+Now let me read the test files:
 ## Code Structure
-- **`app.py`** (64 lines) — Flask application and all backend logic in one file. Creates the `Flask` instance, loads `schema.txt` at import time via `lineage_parser`, stores parsed `MODELS` and `GRAPH` as module-level globals, and defines six route handlers (`/`, `/api/graph`, `/api/upstream/<model>/<col>`, `/api/downstream/<model>/<col>`, `/api/models`, `/static/<path>`). Also contains the `if __name__ == '__main__'` development server entry point.
-- **`lineage_parser.py`** (~796 lines) — Pure-Python SQL DDL parser. Exports four public functions: `parse_schema(sql_text) → Dict[str, Model]`, `get_lineage_graph(models) → dict`, `get_upstream_lineage(...)`, `get_downstream_lineage(...)`. Defines dataclasses `ColumnLineage` and `Model`. Handles CTEs, UNION ALL, window functions, aggregates, filtered aggregates, multi-table joins, `SELECT *` expansion, and CTE-to-real-model resolution. No external dependencies beyond stdlib (`re`, `dataclasses`, `typing`).
-- **`schema.txt`** — Input SQL DDL: 5 base tables (`raw_customers`, `raw_orders`, `raw_order_items`, `raw_products`, `raw_payments`) plus 8 views (staging → intermediate → mart → reporting layers). Also includes a dummy `nosuchtable`.
-- **`static/index.html`** — Single-page HTML shell. Loads `style.css` and `app.js`. Contains header with search, sidebar with model list and detail panel, SVG graph area with reset/focus-mart controls.
-- **`static/app.js`** (~735+ lines) — IIFE-wrapped vanilla JS. Owns all frontend state: graph data, node positions, view transform, drag/pan state. Key functions: `init`, `layoutGraph`, `renderGraph`, `renderNodes`, `renderEdges`, `setupNodeDrag`, `updateConnectedEdges`, `handleNodeClick`, `selectModel`, `selectColumn`, `resetView`, `focusMart`, sessionStorage position helpers. SVG-based rendering with no external libraries.
-- **`static/style.css`** — Dark-theme CSS for the app. Includes cursor grab/grabbing rules for node drag, pointer cursor for interactive text, layout for sidebar/graph split.
-- **`requirements.txt`** — Single dependency: `flask>=3.0`.
+- **`app.py`** — Thin Flask entry point (~12 meaningful lines). Creates the `Flask` instance with `static_folder='static'`, registers the Blueprint from `routes.py`, and provides the `if __name__ == '__main__'` dev-server block. The canonical import `from app import app` is preserved for backward compatibility.
+- **`lineage_parser.py`** — Pure-Python SQL DDL parser (~796 lines, regex-based). Defines `ColumnLineage` and `Model` dataclasses. Public API: `parse_schema(sql_text)` → `Dict[str, Model]`, `build_full_lineage(...)`, `get_upstream_lineage(...)`, `get_downstream_lineage(...)`, `get_lineage_graph(...)`. Internal helpers handle CTE extraction (`_parse_ctes`), UNION ALL splitting, alias resolution from FROM/JOIN, SELECT expression extraction via top-level comma splitting, alias extraction via top-level `AS` scanning, bare and qualified column resolution, and recursive CTE-to-real-model transitive resolution. All SQL parsing is hand-rolled regex + character-level paren-depth tracking; there is **no dependency on `sqlglot` or any SQL parser library**.
+- **`schema_service.py`** — Schema loading service (~31 lines). Reads `schema.txt` once via `SCHEMA_PATH = Path(__file__).parent / 'schema.txt'` and caches `(models, graph)` at module level. Public function `load_schema()` returns the cached tuple.
+- **`routes.py`** — Flask Blueprint `bp` (~50 lines) with five route handlers: `/` (serves `index.html`), `/api/graph`, `/api/upstream/<model_name>/<column_name>`, `/api/downstream/<model_name>/<column_name>`, `/api/models`. Resolves `MODELS` and `GRAPH` at import time from `schema_service.load_schema()`. Imports `get_upstream_lineage` and `get_downstream_lineage` from `lineage_parser`.
+- **`schema.txt`** — PostgreSQL-dialect DDL (~676 lines): 6 `CREATE TABLE` statements (5 `raw_*` tables plus a small `nosuchtable`) and 8 `CREATE VIEW` statements (`stg_orders_enriched`, `stg_line_items_priced`, `int_customer_order_metrics`, `fct_customer_revenue_daily`, `mart_customer_ltv_segments`, `rpt_customer_growth_cohorts`, `mart_segment_health_snapshot`, `rpt_executive_revenue_dashboard`). Views exercise CTEs, UNION ALL, CASE, window functions, filtered aggregates, casts, joins, and multi-layer view-on-view dependencies.
+- **`static/index.html`** — Single-page HTML shell with sidebar (model list + detail panel), SVG `#lineage-graph` area, search bar, and control buttons ("Reset View", "Focus Mart"). Loads `style.css` and `app.js`.
+- **`static/app.js`** — ~735-line vanilla JS IIFE. Fetches `/api/graph`, renders an SVG-based DAG with layered layout, implements BFS-based column/model edge highlighting, search, pan/zoom, and node drag-to-reposition with PointerEvents, 4px click/drag threshold, sessionStorage persistence, and surgical connected-edge re-rendering.
+- **`static/style.css`** — ~397-line dark-theme CSS. Styles for layout, sidebar, search, SVG nodes/edges, drag cursors (`cursor: grab`/`grabbing` via `body.node-dragging` class), and edge highlighting colors (upstream=orange, downstream=green).
+- **`requirements.txt`** — Single dependency: `flask>=3.0`. No SQL parser library currently listed.
 
 ## Entry Points And Flow
-- **Web server**: `python app.py` starts Flask dev server on port 5000. `app.py` is both the entry point and the application module.
-- **Import-time initialization**: When `app.py` is imported, it reads `schema.txt` (resolved relative to `__file__`), calls `parse_schema()`, and computes `MODELS` and `GRAPH` as module globals. This means importing `app` has a side effect (file I/O + parsing).
-- **Request flow**: `GET /` → serves `static/index.html`. Browser loads `app.js`, which calls `GET /api/graph` on `DOMContentLoaded`. API handlers (`api_graph`, `api_upstream`, `api_downstream`, `api_models`) read from the pre-computed `MODELS`/`GRAPH` globals and return JSON via `jsonify()`.
-- **Test entry**: `python -m pytest tests/ -v`. Tests import `lineage_parser` directly (for parser tests) and `from app import app` (for Flask test client tests). Tests use `sys.path.insert` to resolve the parent directory.
+- **CLI / dev server**: `python app.py` starts Flask on port 5000 with `debug=True`.
+- **HTTP request flow**: Browser loads `/` → `index.html` → fetches `/api/graph` → JS renders SVG graph. Column clicks fetch `/api/upstream/...` or `/api/downstream/...` for detail panel. `/api/models` returns a model summary list.
+- **Data flow at startup**: `routes.py` import → `load_schema()` → reads `schema.txt` → `parse_schema()` builds `Dict[str, Model]` → `get_lineage_graph()` produces JSON-serializable `{nodes, edges}` → cached at module level. Subsequent requests use the cached data.
+- **Parser internal flow**: `parse_schema` first regex-extracts all `CREATE TABLE` statements and builds base `Model` objects (columns have no upstream). Then it regex-extracts `CREATE VIEW` statements in document order. For each view: parse CTEs via paren-depth counting, parse each CTE body as a sub-model (handling nested CTEs and UNION ALL), parse the main SELECT, resolve all CTE references transitively to real table/view names via `_resolve_cte_references`.
+- **Column resolution**: Qualified refs (`alias.column`) resolved via FROM/JOIN alias map; bare identifiers matched against available model columns. Expression source sets are deduped and sorted.
 
 ## Tests And Tooling
-- **`tests/__init__.py`** — Empty; marks `tests/` as a package.
-- **`tests/test_lineage.py`** (56 tests) — Parser unit/integration tests. Loads `schema.txt` at module level. Classes: `TestBaseTableParsing`, `TestStgOrdersEnriched`, `TestStgLineItemsPriced`, `TestIntCustomerOrderMetrics`, `TestFctCustomerRevenueDaily`, `TestMartCustomerLtvSegments`, `TestGraphStructure`, `TestSpecificLineageRequirements`. Imports directly from `lineage_parser`.
-- **`tests/test_tester_verification.py`** (54 tests) — Deeper verification. Imports `lineage_parser` and `from app import app` (3 occurrences via `setup_class` in `TestFlaskAPI` and `TestUIStructure`, plus `TestDragInfrastructure`). Classes: `TestNoCTELeakage`, `TestDeepLineageProofs`, `TestFlaskAPI`, `TestGraphInvariants`, `TestCrossLayerLineage`, `TestColumnPresence`, `TestUIStructure`, `TestDragInfrastructure`.
-- **`tests/test_drag_verification.py`** (53 tests) — Structural verification of drag feature. Uses `from app import app` (1 occurrence via `flask_client` fixture). 16 test classes covering pointer events, click/drag threshold, CSS cursors, sessionStorage, z-ordering, edge updates, pan/drag separation, README content checks.
-- **Import pattern**: All three test files use `sys.path.insert(0, str(Path(__file__).parent.parent))` and import `from app import app` for Flask test client access. Four total `from app import app` sites across tests.
+- **`tests/test_lineage.py`** (56 tests) — Core parser tests against `schema.txt`. Classes: `TestBaseTableParsing` (table/column discovery, no-upstream invariant), `TestStgOrdersEnriched` (passthrough, cast, DATE_TRUNC, CASE, arithmetic, CTE aggregates, boolean, COALESCE, NULLIF, filtered aggregates), `TestStgLineItemsPriced` (multi-table join, COALESCE fallback, concatenation, arithmetic, CASE), `TestIntCustomerOrderMetrics` (view-on-view, LOWER, CONCAT, aggregates, filtered aggregates, ratios), `TestFctCustomerRevenueDaily` (UNION ALL, DATE_TRUNC, filtered aggregates, contribution formula), `TestMartCustomerLtvSegments` (LTV derivation, CASE segmentation, window functions, multi-view dependency), `TestGraphStructure` (10-node graph, valid edge references, upstream/downstream recursion), `TestSpecificLineageRequirements` (5 explicit lineage proof assertions).
+- **`tests/test_tester_verification.py`** (54 tests) — Deeper integration: `TestNoCTELeakage` (no CTE or `__branch` names in graph), `TestDeepLineageProofs` (recursive upstream reaches base tables for 5 key columns), `TestFlaskAPI` (all endpoints via `test_client`), `TestGraphInvariants` (every view column has lineage entry, every edge references valid model/column, no self-referencing edges, 10 models present), `TestCrossLayerLineage` (multi-hop upstream/downstream resolution), `TestColumnPresence`, `TestUIStructure`, `TestDragInfrastructure`.
+- **`tests/test_drag_verification.py`** (53 tests) — Structural checks on JS/CSS source via Flask test client: pointer events, threshold value, click delegation, edge update selectors, coordinate space, sessionStorage, reset behavior, z-ordering, cursor styles, pan/drag separation, Bezier path consistency, error handling, HTML integrity, IIFE wrapper, README content.
+- **`tests/test_modularization.py`** (30 tests) — Backward compatibility (`from app import app`), `app.py` ≤25 meaningful lines, `schema_service` caching/identity, Blueprint structure, API responses, static file serving, `lineage_parser` import stability, single-dependency `requirements.txt`, no circular imports, data consistency between `schema_service` and `routes`.
+- **Test runner**: `python -m pytest tests/ -v` (all ~193 tests). Tests add the project root to `sys.path` via `sys.path.insert(0, ...)`. No `conftest.py` exists.
+- **No linter or formatter config** in the workspace.
 
 ## Extension Points
-- **`lineage_parser.py`** is fully decoupled from Flask — it is a pure parsing library. It can be imported and used independently.
-- **`app.py`** holds all Flask wiring: routes, static file serving, schema loading, and the app instance. The planned refactor targets splitting this into `schema_service.py` (data loading), `routes.py` (Blueprint with route handlers), and a slim `app.py` (factory/entry point).
-- **`schema.txt`** path is hardcoded in `app.py` as `Path(__file__).parent / 'schema.txt'`. Tests also hardcode `Path(__file__).parent.parent / 'schema.txt'`.
-- **No application factory pattern** currently — `app` is a module-level `Flask(...)` instance with routes registered at import time.
+- **`lineage_parser.py`** is the primary extension point for the current task. The parser uses regex + manual paren-depth tracking throughout. Key functions that would be replaced or augmented by `sqlglot`: `parse_schema` (table/view extraction regex), `_parse_table_columns` (line-splitting column extraction), `_parse_ctes` (manual CTE parsing), `_extract_from_aliases` (FROM/JOIN regex), `_extract_select_expressions` (SELECT→FROM boundary finding + comma splitting), `_extract_alias` (top-level AS scanning), `_resolve_expression_sources` (qualified + bare column ref regex), `_has_union_all` / `_split_union_all` (paren-depth UNION ALL detection). The `ColumnLineage` and `Model` dataclasses, `get_lineage_graph`, `get_upstream_lineage`, and `get_downstream_lineage` functions are pure data-structure operations independent of parsing and should be preserved.
+- **`schema_service.py`** — Thin wrapper; changes to the parser API (e.g. if `parse_schema` signature changes) would need updating here.
+- **`routes.py`** — Blueprint registration pattern allows adding new endpoints without touching `app.py`.
+- **`static/app.js`** — `MODEL_LAYERS` dict is hardcoded to the current 10-model set; new models from `schema.txt` would need entries here or a dynamic layering algorithm.
+- **`requirements.txt`** — Currently `flask>=3.0` only. Adding `sqlglot` requires updating this file and the `test_modularization.py::TestNoDependencyChanges::test_requirements_unchanged` test which asserts exactly one line.
 
 ## Structural Notes
-- **All backend logic in `app.py`**: schema loading (lines 17–20), all 6 route definitions (lines 23–59), and the dev-server block (lines 62–63) are in one 64-line file. This is the refactor target.
-- **Module-level side effects**: Importing `app` triggers `schema.txt` file read and full parse. Tests depend on this behavior.
-- **Flat file layout**: No Python packages — `app.py`, `lineage_parser.py`, `schema.txt`, and `static/` are all peers at the workspace root. Tests live in `tests/` and use `sys.path` manipulation.
-- **Test coupling to `app.py`**: Four `from app import app` import sites across tests. The `TestFlaskAPI`, `TestUIStructure`, `TestDragInfrastructure` classes (in `test_tester_verification.py`), and the `flask_client` fixture (in `test_drag_verification.py`) all depend on the current module path.
-- **No Blueprint usage**: Routes are registered directly on the `app` object, not via a Flask Blueprint.
-- **`nosuchtable`** is defined in `schema.txt` and appears in the parsed models/graph (the parser picks up all `CREATE TABLE` statements), referenced in the final executive dashboard view.
+- **Parser is entirely regex-based.** Every SQL construct (CREATE TABLE/VIEW extraction, CTE boundaries, SELECT expression splitting, alias resolution, column reference finding, UNION ALL detection) is handled by regex patterns or character-by-character paren-depth scanning. This is the code targeted for `sqlglot` replacement.
+- **The parser currently misses 3 of the 8 views.** `test_lineage.py::TestBaseTableParsing::test_all_views_found` asserts only 5 views (`stg_*`, `int_*`, `fct_*`, `mart_customer_ltv_segments`). The downstream views (`rpt_customer_growth_cohorts`, `mart_segment_health_snapshot`, `rpt_executive_revenue_dashboard`) are defined in `schema.txt` but not captured — likely the view-extraction regex `r'CREATE\s+VIEW\s+(\w+)\s+AS\s+(.*?);(?=\s*(?:--|CREATE|DROP|$))'` is failing on multi-CTE views with embedded semicolons or lookahead mismatches. This is a concrete bug that `sqlglot` parsing would fix.
+- **`nosuchtable`** is a 6th table in `schema.txt` (used by `rpt_executive_revenue_dashboard`). The test suite asserts only 5 tables — if the parser starts finding it, tests will need updating.
+- **Test coupling to parser output.** Many tests assert exact upstream sets, model counts (10 nodes), and edge counts (>100). Improving the parser to capture the 3 missing views and `nosuchtable` will change these numbers and require test updates.
+- **Test that blocks new dependencies.** `test_modularization.py::TestNoDependencyChanges::test_requirements_unchanged` asserts `requirements.txt` has exactly 1 line. This must be updated when `sqlglot` is added.
+- **No `conftest.py`.** All test files add `sys.path.insert(0, ...)` manually for imports.
+- **Module-level schema parse in tests.** `test_lineage.py` and `test_tester_verification.py` both call `parse_schema(SCHEMA_TEXT)` at module scope; changes to parser behavior propagate immediately to all tests.
 
 ## Known Documentation
 - `README.md`

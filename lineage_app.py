@@ -106,6 +106,27 @@ Requirements:
 - Update `README.md` if setup, run commands, or project structure change.
 """
 
+FEATURE_PROMPT = """
+Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
+
+Implement this parser refactor:
+Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+
+Requirements:
+- Preserve existing API behavior and frontend behavior.
+- Add `sqlglot` to the project dependencies.
+- Use `sqlglot` for parsing SQL contained in schema.txt 
+- Add support for dbt syntax - aka the use of `{{ source('schema', 'table') }}` and `{{ ref('table') }}` in the SQL.
+- Preserve the existing lineage model/data structures so callers of `lineage_parser.py` do not need major changes.
+- Reuse the current parser logic as a fallback when `sqlglot` cannot parse a statement or when an edge case is not yet covered by the new implementation.
+- Keep existing tests passing unless a test was asserting a known limitation of the old parser.
+- Add or update focused tests proving `sqlglot` handles complex schema constructs from `schema.txt`, especially nested CTEs, UNION ALL, window functions, casts, CASE expressions, and multi-hop view dependencies.
+- Avoid rewriting unrelated frontend or Flask routing code.
+- Run the relevant pytest suite and fix regressions introduced by the parser refactor.
+- Update `README.md` and `requirements.txt` if dependencies, parser capabilities, or setup instructions change.
+"""
+
+
 USER_PROMPT=FEATURE_PROMPT
 
 workspace = vibedev.prompt(

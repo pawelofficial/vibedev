@@ -34,6 +34,7 @@ vibedev.prompt("build a CLI todo app in Python with sqlite storage")
 vibedev.set_permissions("acceptEdits")
 vibedev.set_model("claude-sonnet-4-6")
 vibedev.set_workspace_root("~/projects/vibedev-runs")
+vibedev.set_common_knowledge(False)  # optional: skip generated team context
 ```
 
 Or from the shell:
@@ -41,6 +42,7 @@ Or from the shell:
 ```bash
 vibedev "build a calculator web app"
 vibedev "a flask hello world" --permissions acceptEdits --model claude-sonnet-4-6
+vibedev "a flask hello world" --no-common-knowledge
 ```
 
 ## Status

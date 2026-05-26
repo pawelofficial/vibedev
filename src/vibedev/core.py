@@ -77,6 +77,11 @@ def prompt(
         print(f"[vibedev] workspace: {ws}", file=sys.stderr, flush=True)
         print(f"[vibedev] model: {cfg['model']}  (main agent)", file=sys.stderr, flush=True)
         print(f"[vibedev] permissions: {cfg['permission_mode']}", file=sys.stderr, flush=True)
+        print(
+            f"[vibedev] common knowledge: {'on' if cfg['common_knowledge'] else 'off'}",
+            file=sys.stderr,
+            flush=True,
+        )
         if cfg["team"]:
             parts = [
                 f"{role}({model or cfg['model']})" for role, model in cfg["team"]
@@ -206,29 +211,32 @@ async def _run_coded_team_workflow(
     assert tester_model is not None
 
     plan = _load_or_create_team_plan(workspace, user_prompt)
-    common_knowledge = _write_common_knowledge(workspace, user_prompt, plan)
-    knowledge_curator_prompt = _build_knowledge_curator_prompt(
-        user_prompt,
-        plan,
-        common_knowledge,
-    )
-    knowledge_curator_report = await _run_ad_hoc_agent(
-        workspace,
-        cfg,
-        role_name="knowledge curator",
-        model=cfg["model"],
-        system_prompt=KNOWLEDGE_CURATOR_PROMPT,
-        prompt=knowledge_curator_prompt,
-        logger=logger,
-        conversation_logger=conversation_logger,
-        quiet=quiet,
-    )
-    common_knowledge = _write_common_knowledge(
-        workspace,
-        user_prompt,
-        plan,
-        curated_context=knowledge_curator_report,
-    )
+    common_knowledge = ""
+    knowledge_curator_report = ""
+    if cfg["common_knowledge"]:
+        common_knowledge = _write_common_knowledge(workspace, user_prompt, plan)
+        knowledge_curator_prompt = _build_knowledge_curator_prompt(
+            user_prompt,
+            plan,
+            common_knowledge,
+        )
+        knowledge_curator_report = await _run_ad_hoc_agent(
+            workspace,
+            cfg,
+            role_name="knowledge curator",
+            model=cfg["model"],
+            system_prompt=KNOWLEDGE_CURATOR_PROMPT,
+            prompt=knowledge_curator_prompt,
+            logger=logger,
+            conversation_logger=conversation_logger,
+            quiet=quiet,
+        )
+        common_knowledge = _write_common_knowledge(
+            workspace,
+            user_prompt,
+            plan,
+            curated_context=knowledge_curator_report,
+        )
     analyst_brief = ""
     analyst_added_task_indices: list[int] = []
     if analyst_model is not None:
@@ -253,12 +261,13 @@ async def _run_coded_team_workflow(
             quiet,
         )
         analyst_added_task_indices = _apply_analyst_review(workspace, plan, analyst_brief)
-        common_knowledge = _write_common_knowledge(
-            workspace,
-            user_prompt,
-            plan,
-            curated_context=knowledge_curator_report,
-        )
+        if cfg["common_knowledge"]:
+            common_knowledge = _write_common_knowledge(
+                workspace,
+                user_prompt,
+                plan,
+                curated_context=knowledge_curator_report,
+            )
 
     task_index = _current_request_task_index(plan, user_prompt)
     if task_index is None:
@@ -346,12 +355,13 @@ async def _run_coded_team_workflow(
                 quiet,
             )
             _restore_plan_if_changed(workspace, plan_text_after_checkoff)
-            _write_common_knowledge(
-                workspace,
-                user_prompt,
-                plan,
-                curated_context=knowledge_curator_report,
-            )
+            if cfg["common_knowledge"]:
+                _write_common_knowledge(
+                    workspace,
+                    user_prompt,
+                    plan,
+                    curated_context=knowledge_curator_report,
+                )
             return
 
         if verdict is None:

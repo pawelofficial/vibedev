@@ -25,6 +25,20 @@ Build a column-lineage web app for the SQL models in schema.txt.
 - [x] **Remove the "Decide on module layout" task** — commit to the flat peer-module approach (`schema_service.py` and `routes.py` as siblings of `app.py`).
 - [x] **Resolve whether the explicit `static_files` route should be kept or dropped** during the Blueprint extraction.
 - [x] **Add a smoke test that `python app.py` still starts the server** (or at minimum, verify the `if __name__ == '__main__'` block is present and `app` is importable from `app.py`).
+- [ ] Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+- [ ] **Clean up stale plan state**: Mark the 7 pending modularization sub-tasks as complete (the modules `schema_service.py`, `routes.py`, and the slim `app.py` already exist and pass tests), so the developer starts with a clean task list.
+- [ ] **Add `sqlglot` to `requirements.txt`**: Add `sqlglot>=26.0` as a dependency.
+- [ ] **Implement a dbt Jinja preprocessor function**: Create a `_preprocess_dbt_templates(sql_text: str) -> str` function (in `lineage_parser.py` or a new `dbt_preprocessor.py`) that regex-replaces `{{ source('schema', 'table') }}` → `table` (o...
+- [ ] **Implement sqlglot-based statement extraction**: Replace the two top-level regexes in `parse_schema()` — the CREATE TABLE regex (`r'CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);'`) and the CREATE VIEW regex (`r'CREATE\s+VIEW\s+(\w+)\s+AS\s+(.*?);(?...
+- [ ] **Implement sqlglot-based CREATE TABLE column extraction**: Replace `_parse_table_columns()` regex logic with `sqlglot` AST traversal to extract column names from `CREATE TABLE` statements.
+- [ ] **Implement sqlglot-based CREATE VIEW body parsing**: Replace the manual CTE parser (`_parse_ctes`), FROM/JOIN alias extractor (`_extract_from_aliases`), SELECT expression extractor (`_extract_select_expressions`), and column reference res...
+- [ ] **Update hardcoded test assertions for known parser limitations**: Update `test_lineage.py::TestBaseTableParsing::test_all_tables_found` (5 → 6 tables, add `nosuchtable`), `test_all_views_found` (5 → 8 views), `TestGraphStructure::test_gra...
+- [ ] **Update `static/app.js` `MODEL_LAYERS`**: Add layer assignments for `rpt_customer_growth_cohorts`, `mart_segment_health_snapshot`, `rpt_executive_revenue_dashboard`, and `nosuchtable` so the new models render correctly in the DAG layout.
+- [ ] **Add focused sqlglot parser tests**: Add a new test class (or file `tests/test_sqlglot_parser.py`) with tests proving sqlglot handles: (a) nested CTEs (views 6–8), (b) UNION ALL lineage merging (view 4), (c) window functions with PARTITIO...
+- [ ] **Add dbt syntax parsing tests**: Add tests proving `{{ source('raw', 'orders') }}` resolves to the correct table reference and `{{ ref('stg_orders_enriched') }}` resolves to the correct view reference.
+- [ ] **Add fallback-path tests**: Add tests that feed deliberately malformed SQL (or a dialect sqlglot doesn't support) and verify the regex fallback produces the same output as the current parser.
+- [ ] **Run full pytest suite and fix regressions**: Execute `python -m pytest tests/ -v` and fix all failures introduced by the refactor.
+- [ ] **Update `README.md`**: Add `sqlglot` to the Setup/Install section, document the new parser capabilities (dbt syntax, all 8 views now parsed), update the test count, and note the sqlglot+regex-fallback architecture under the Parser section.
 
 ## History
 - 2026-05-24 - Request: Build a column-lineage web app for the SQL models in schema.txt.
@@ -41,3 +55,6 @@ Build a column-lineage web app for the SQL models in schema.txt.
 - 2026-05-25 - Completed: **Remove the "Decide on module layout" task** — commit to the flat peer-module approach (`schema_service.py` and `routes.py` as siblings of `app.py`).
 - 2026-05-25 - Completed: **Resolve whether the explicit `static_files` route should be kept or dropped** during the Blueprint extraction.
 - 2026-05-25 - Completed: **Add a smoke test that `python app.py` still starts the server** (or at minimum, verify the `if __name__ == '__main__'` block is present and `app` is importable from `app.py`).
+- 2026-05-25 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+- 2026-05-26 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+- 2026-05-26 - Analyst review: Let me first examine the existing codebase to understand the current parser, schema, tests, and dependencies before challenging the plan. Now I have a thorough understanding of the codebase. Let me compile my analysis. ## Missing Requirements - **dbt Jinja preprocessing strategy is undefin...

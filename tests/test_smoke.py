@@ -34,6 +34,7 @@ from vibedev.core import (
 )
 from vibedev.config import (
     get_config,
+    set_common_knowledge,
     set_model,
     set_permissions,
     set_team,
@@ -57,6 +58,7 @@ def test_public_api_exports():
     assert callable(vibedev.set_model)
     assert callable(vibedev.set_workspace_root)
     assert callable(vibedev.set_team)
+    assert callable(vibedev.set_common_knowledge)
 
 
 def test_default_config():
@@ -64,6 +66,7 @@ def test_default_config():
     assert cfg["permission_mode"] == "bypassPermissions"
     assert cfg["model"].startswith("claude-")
     assert cfg["workspace_root"]
+    assert cfg["common_knowledge"] is True
     assert cfg["team"] == []
 
 
@@ -127,6 +130,7 @@ def test_conversation_logger_writes_prompt_response_without_tool_details(tmp_pat
         "permission_mode": "bypassPermissions",
         "model": "claude-opus-4-7",
         "workspace_root": str(tmp_path),
+        "common_knowledge": True,
         "team": [("developer", None), ("tester", "sonnet")],
     }
 
@@ -158,6 +162,22 @@ def test_set_workspace_root_roundtrip():
         assert get_config()["workspace_root"] == "/tmp/vibedev-test"
     finally:
         set_workspace_root(original)
+
+
+def test_set_common_knowledge_roundtrip():
+    original = get_config()["common_knowledge"]
+    try:
+        set_common_knowledge(False)
+        assert get_config()["common_knowledge"] is False
+        set_common_knowledge(True)
+        assert get_config()["common_knowledge"] is True
+    finally:
+        set_common_knowledge(original)
+
+
+def test_set_common_knowledge_rejects_non_bool():
+    with pytest.raises(ValueError):
+        set_common_knowledge("false")  # type: ignore[arg-type]
 
 
 def test_set_team_roundtrip_bare_strings():
@@ -584,6 +604,7 @@ def test_coded_team_workflow_runs_knowledge_curator_first(tmp_path, monkeypatch)
         "permission_mode": "bypassPermissions",
         "model": "claude-opus-4-7",
         "workspace_root": str(tmp_path),
+        "common_knowledge": True,
         "team": [("business_analyst", None), ("developer", None), ("tester", None)],
     }
 
@@ -604,6 +625,55 @@ def test_coded_team_workflow_runs_knowledge_curator_first(tmp_path, monkeypatch)
     assert calls[0].startswith("User request:")
     assert "Current generated common knowledge draft:" in calls[0]
     assert "Curated workspace structure." in common_knowledge
+
+
+def test_coded_team_workflow_can_skip_common_knowledge(tmp_path, monkeypatch):
+    calls: list[str] = []
+
+    async def fake_run_query(prompt, options, logger, quiet):  # noqa: ANN001, ARG001
+        calls.append(prompt)
+        if "Current generated common knowledge draft:" in prompt:
+            return "## Code Structure\n- Should not run."
+        if "Current Python-owned plan:" in prompt:
+            return """## Missing Requirements
+
+## Proposed Tasks
+
+## Acceptance Criteria
+- Works.
+
+## Risks
+"""
+        if "End your response with exactly one verdict line:" in prompt:
+            return "verified\nVIBEDEV_VERDICT: PASS"
+        return "developer or README report"
+
+    class Logger:
+        def write_stage(self, label: str) -> None:  # noqa: ARG002
+            return None
+
+    monkeypatch.setattr(core, "_run_query", fake_run_query)
+    cfg = {
+        "permission_mode": "bypassPermissions",
+        "model": "claude-opus-4-7",
+        "workspace_root": str(tmp_path),
+        "common_knowledge": False,
+        "team": [("business_analyst", None), ("developer", None), ("tester", None)],
+    }
+
+    core.anyio.run(
+        core._run_coded_team_workflow,
+        "build demo app",
+        tmp_path,
+        cfg,
+        True,
+        Logger(),
+        _DummyConversationLogger(),
+    )
+
+    assert not (tmp_path / ".vibedev" / "common_knowledge.md").exists()
+    assert all("Current generated common knowledge draft:" not in call for call in calls)
+    assert all("Shared project context:" not in call for call in calls)
 
 
 def test_coded_team_workflow_marks_analyst_subtasks_done_after_parent_pass(
@@ -638,6 +708,7 @@ def test_coded_team_workflow_marks_analyst_subtasks_done_after_parent_pass(
         "permission_mode": "bypassPermissions",
         "model": "claude-opus-4-7",
         "workspace_root": str(tmp_path),
+        "common_knowledge": True,
         "team": [("business_analyst", None), ("developer", None), ("tester", None)],
     }
 
@@ -708,6 +779,7 @@ Build an app.
         "permission_mode": "bypassPermissions",
         "model": "claude-opus-4-7",
         "workspace_root": str(tmp_path),
+        "common_knowledge": True,
         "team": [("business_analyst", None), ("developer", None), ("tester", None)],
     }
 

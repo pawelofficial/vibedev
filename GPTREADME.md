@@ -23,6 +23,7 @@ The package intentionally exposes a tiny public API from `vibedev/__init__.py`:
 - `set_model`
 - `set_workspace_root`
 - `set_team`
+- `set_common_knowledge`
 - `get_config`
 
 The user-facing idea is "vibe coding an app that can vibe code another app"
@@ -40,12 +41,12 @@ review stage:
 1. Python reads or creates `.vibedev/plan.md` inside the target workspace.
 2. Python appends the current prompt as a pending task if it is not already
    listed.
-3. Python writes a draft `.vibedev/common_knowledge.md` with shared workspace
-   context.
-4. Python runs an internal ad hoc `knowledge_curator` at the beginning of each
-   coded team deploy. It inspects the workspace and returns structured
-   code-structure context only; Python writes that report into common
-   knowledge.
+3. If common knowledge is enabled, Python writes a draft
+   `.vibedev/common_knowledge.md` with shared workspace context.
+4. If common knowledge is enabled, Python runs an internal ad hoc
+   `knowledge_curator` at the beginning of each coded team deploy. It inspects
+   the workspace and returns structured code-structure context only; Python
+   writes that report into common knowledge.
 5. Python optionally runs `business_analyst` against the request, current plan,
    and a pointer to common knowledge.
 6. Python parses the analyst's `## Proposed Tasks` section and appends missing
@@ -115,6 +116,8 @@ runs require the Claude Code CLI installed and authenticated.
 - `.vibedev/common_knowledge.md` is generated in team mode. Prompts mention its
   path and purpose, but do not inject the full contents. It now includes a
   Python-written `knowledge_curator` report from an internal ad hoc agent.
+  It can be disabled with `set_common_knowledge(False)` or
+  `--no-common-knowledge`.
 - Prompt-derived plan and common-knowledge entries are compacted so large user
   prompts do not get copied wholesale into `.vibedev/plan.md`.
 - Transcript logs live in a sibling directory
