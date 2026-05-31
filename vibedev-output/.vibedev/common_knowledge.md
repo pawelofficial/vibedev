@@ -7,7 +7,7 @@ It captures shared project context; Python owns workflow state in the plan.
 Build a column-lineage web app for the SQL models in schema.txt.
 
 ## Current Request
-create a standalone script for schema.txt file generator.
+Implement the missing PostgreSQL-backed schema.txt generator feature.
 
 ## Important Paths
 - Plan: `.vibedev/plan.md`
@@ -51,62 +51,63 @@ create a standalone script for schema.txt file generator.
 - [ ] **Run full pytest suite and fix regressions**: Execute `python -m pytest tests/ -v` and fix all failures introduced by the refactor.
 - [ ] **Update `README.md`**: Add `sqlglot` to the Setup/Install section, document the new parser capabilities (dbt syntax, all 8 views now parsed), update the test count, and note the sqlglot+regex-fallback architecture under the Parser section.
 - [x] create a standalone script for schema.txt file generator.
+- [ ] Implement the missing PostgreSQL-backed schema.txt generator feature.
 
 ## Recent Plan History
-- 2026-05-25 - Completed: **Add a smoke test that `python app.py` still starts the server** (or at minimum, verify the `if __name__ == '__main__'` block is present and `app` is importable from `app.py`).
-- 2026-05-25 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 - 2026-05-26 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 - 2026-05-26 - Analyst review: Let me first examine the existing codebase to understand the current parser, schema, tests, and dependencies before challenging the plan. Now I have a thorough understanding of the codebase. Let me compile my analysis. ## Missing Requirements - **dbt Jinja preprocessing strategy is undefin...
 - 2026-05-26 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 - 2026-05-26 - Completed: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 - 2026-05-31 - Request: create a standalone script for schema.txt file generator.
 - 2026-05-31 - Completed: create a standalone script for schema.txt file generator.
+- 2026-05-31 - Request: Implement the missing PostgreSQL-backed schema.txt generator feature.
+- 2026-05-31 - Request: Implement the missing PostgreSQL-backed schema.txt generator feature.
 
 ## Curated Project Context
-Now let me read the remaining files:
-Now I have a comprehensive understanding of the codebase. Here is my structural report:
+Now I have a comprehensive picture. Here is the structural report:
 
 ## Code Structure
-- **`app.py`** — Slim Flask application entry point (~7 meaningful lines). Creates the `Flask` instance, registers the `routes.bp` Blueprint, and provides the `if __name__ == '__main__'` dev-server entry point.
-- **`schema_service.py`** — Schema loading service. Reads `schema.txt`, calls `parse_schema()` from `lineage_parser`, and caches `(models, graph)` at module level via `load_schema()`. Subsequent calls return the same cached objects.
-- **`routes.py`** — Flask Blueprint (`bp`) with 5 route handlers: `/` (serves `static/index.html`), `/api/graph`, `/api/upstream/<model>/<column>`, `/api/downstream/<model>/<column>`, `/api/models`. Imports data from `schema_service.load_schema()` at import time.
-- **`lineage_parser.py`** — Core parser module (~1250 lines). Dataclasses: `ColumnLineage`, `Model`. Primary parser uses `sqlglot` (Postgres dialect AST traversal); per-statement regex fallback when sqlglot fails. Key functions: `parse_schema()`, `get_lineage_graph()`, `get_upstream_lineage()`, `get_downstream_lineage()`, `build_full_lineage()`. Internal helpers handle CTE resolution, UNION ALL merging, star expansion, dbt Jinja preprocessing (`_preprocess_dbt_templates`), and alias extraction.
-- **`schema.txt`** — SQL DDL file defining 6 tables (`raw_customers`, `raw_orders`, `raw_order_items`, `raw_products`, `raw_payments`, `nosuchtable`) and 8 views (`stg_orders_enriched`, `stg_line_items_priced`, `int_customer_order_metrics`, `fct_customer_revenue_daily`, `mart_customer_ltv_segments`, `rpt_customer_growth_cohorts`, `mart_segment_health_snapshot`, `rpt_executive_revenue_dashboard`). Views form a multi-layer dependency DAG.
-- **`static/index.html`** — Single-page HTML shell with sidebar (model list, detail panel), SVG graph area, search box, and control buttons (Reset View, Focus Mart).
-- **`static/app.js`** — ~850-line IIFE. Fetches `/api/graph` on load, dynamically computes topological layer assignments (`computeModelLayers`), lays out nodes, renders SVG nodes/edges with Bezier curves, handles column/model selection with upstream/downstream highlighting (BFS), implements drag-to-reposition with PointerEvents (4px threshold, `sessionStorage` persistence, surgical edge re-rendering), pan/zoom, and search filtering.
-- **`static/style.css`** — Styles for the graph UI including `cursor: grab`/`cursor: grabbing` for node drag, `.model-node` types, edge highlighting, sidebar, search results, and detail panel.
-- **`requirements.txt`** — Two runtime dependencies: `flask>=3.0`, `sqlglot>=26.0`.
+- **`app.py`** — Thin Flask entry point (~12 lines). Creates `Flask` instance, registers the `bp` Blueprint from `routes.py`, provides `if __name__ == '__main__'` dev-server block. `from app import app` is the backward-compatible import.
+- **`routes.py`** — Flask Blueprint (`bp`) with 5 route handlers: `/` (serves `index.html`), `/api/graph`, `/api/models`, `/api/upstream/<model>/<column>`, `/api/downstream/<model>/<column>`. Imports parsed data from `schema_service.load_schema()` at module level; does not parse SQL itself.
+- **`schema_service.py`** — Schema loading with module-level caching. `load_schema()` reads `schema.txt`, calls `lineage_parser.parse_schema()`, caches `(models, graph)`. Exposes `SCHEMA_PATH`.
+- **`lineage_parser.py`** — Core SQL DDL parser (~1245 lines). Dual-strategy: primary sqlglot AST-based parser (`_parse_schema_sqlglot`) with per-statement regex fallback (`_parse_schema_regex`). Key data classes: `ColumnLineage`, `Model`. Handles CTEs, UNION ALL, window functions, dbt Jinja preprocessing, `SELECT *` expansion, CTE-to-real-model resolution. Public API: `parse_schema()`, `build_full_lineage()`, `get_upstream_lineage()`, `get_downstream_lineage()`, `get_lineage_graph()`.
+- **`generate_schema.py`** — Standalone schema.txt generator (~1507 lines). Produces PostgreSQL DDL across 3 business domains (`ecommerce`, `healthcare`, `saas`). Configurable via `build_schema(domain, table_count, depth, include_dbt, seed)`. Also has CLI (`main()`) with argparse: `--domain`, `--tables`, `--depth`, `--include-dbt`, `--seed`, `-o`, `--dry-run`. Uses dataclasses `ColumnDef`, `TableDef`, `ViewColumn`, `ViewDef` for domain blueprints. **Currently generates DDL purely from in-memory Python data; has no PostgreSQL database connectivity.**
+- **`schema.txt`** — Hand-authored/generated SQL DDL input (6 tables: `nosuchtable`, `raw_customers`, `raw_orders`, `raw_order_items`, `raw_products`, `raw_payments`; 8 views across stg/int/fct/mart/rpt layers).
+- **`static/index.html`** — Single-page HTML with search, sidebar, detail panel, SVG graph container, and control buttons.
+- **`static/app.js`** — Frontend graph visualization (700+ lines, IIFE). SVG-based DAG rendering, drag-to-reposition with PointerEvents, session-storage position persistence, pan/zoom, column/model selection, search, dynamic layer computation via `computeModelLayers()`.
+- **`static/style.css`** — Dark-theme styles. Includes `cursor: grab`/`cursor: grabbing` for drag, `body.node-dragging` class styling.
+- **`requirements.txt`** — Two dependencies: `flask>=3.0`, `sqlglot>=26.0`. **No PostgreSQL driver (e.g., `psycopg2`) is listed.**
 
 ## Entry Points And Flow
-- **Web app**: `python app.py` → Flask dev server on port 5000. Browser loads `/` → `index.html` → `app.js` fetches `/api/graph` → renders interactive SVG DAG.
-- **Import chain**: `app.py` → `routes.py` → `schema_service.py` → `lineage_parser.py`. Schema is parsed once at import time; all subsequent requests use cached data.
-- **API data flow**: `schema.txt` → `_preprocess_dbt_templates()` → `_parse_schema_sqlglot()` (with per-statement regex fallback) → `Dict[str, Model]` → `get_lineage_graph()` → JSON `{nodes, edges}` served via `/api/graph`.
-- **Lineage queries**: `/api/upstream/<m>/<c>` and `/api/downstream/<m>/<c>` call recursive `get_upstream_lineage()` / `get_downstream_lineage()` which walk `ColumnLineage.upstream` references transitively.
-- **Frontend interaction**: Click model/column → detail panel shows upstream/downstream edges; BFS highlights connected edges in SVG. Drag node → PointerEvents update node position + surgically re-render connected Bezier edges. Positions persist in `sessionStorage`.
+- **Web app**: `python app.py` → Flask dev server on port 5000. `app.py` imports `routes.bp` → `routes.py` imports `schema_service.load_schema()` → `schema_service` reads `schema.txt` and calls `lineage_parser.parse_schema()` → cached `(MODELS, GRAPH)` served via 5 API endpoints. Browser loads `index.html` → `app.js` fetches `/api/graph` → renders SVG DAG.
+- **Schema generator CLI**: `python generate_schema.py [flags]` → `main()` parses args → `build_schema()` assembles DDL from in-memory domain definitions → writes to file or stdout. No database interaction.
+- **Programmatic generator API**: `from generate_schema import build_schema; ddl = build_schema(domain="saas", depth=3)`.
+- **Data flow**: `schema.txt` (DDL) → `lineage_parser.parse_schema()` → `Dict[str, Model]` → `get_lineage_graph()` → JSON `{nodes, edges}` → frontend SVG rendering.
 
 ## Tests And Tooling
-- **`tests/test_lineage.py`** — Core parser tests. Loads `schema.txt` once at module level. Classes: `TestBaseTableParsing` (6 tables, 8 views found, column lists, no upstream for base tables), `TestStgOrdersEnriched` (passthrough, cast, CASE, arithmetic, CTE aggregates, COALESCE, filtered aggregates, boolean derivation, joins), `TestStgLineItemsPriced` (multi-table join, COALESCE fallback, concatenation, arithmetic, CASE, margin), `TestIntCustomerOrderMetrics` (view-to-view dependency, aggregates, ratios), `TestFctCustomerRevenueDaily` (UNION ALL, filtered aggregates), `TestMartCustomerLtvSegments` (window functions, CASE segmentation, multi-view dependencies), `TestGraphStructure` (14 nodes, valid edges, recursive upstream/downstream), `TestSpecificLineageRequirements` (5 deep lineage proofs).
-- **`tests/test_modularization.py`** — Verifies backend modularization: backward-compatible `from app import app`, `app.py` ≤25 meaningful lines with `__main__` block, `schema_service.load_schema()` caching, Blueprint with 5 routes, all API endpoints return correct data, static file serving, `lineage_parser` unchanged interface, no new dependencies, no circular imports, data consistency between `routes.py` and `schema_service.py`.
-- **`tests/test_tester_verification.py`** — Deep acceptance tests: no CTE/branch name leakage in graph edges, 5 required column lineage proofs with exact upstream columns, Flask API endpoint tests via `test_client()`, graph structural invariants (every view column has lineage, every edge references valid columns, no self-referencing edges, table columns have no upstream), cross-layer lineage resolution (multi-hop traces to base tables), column presence checks, UI HTML structure checks, drag infrastructure checks (PointerEvents, threshold, sessionStorage, CSS cursors).
-- **`tests/test_drag_verification.py`** — Drag feature structural tests: PointerEvent usage, 4px click/drag threshold, click delegation (selectModel/selectColumn), surgical edge update, coordinate-space scale correction, sessionStorage persistence, reset view clears positions, z-ordering, CSS cursor styles, pan/drag separation, `updateNodePosition` correctness, README documentation, edge Bezier path consistency, sessionStorage error handling, HTML integrity (IIFE, line count, app.js included).
-- **`tests/test_sqlglot_parser.py`** — sqlglot-specific tests: sqlglot availability, all 14 models discovered, nested CTEs (views 6-8), UNION ALL lineage merging, window functions (DENSE_RANK, NTILE, LAG, RANK), dbt Jinja preprocessing, regex fallback path, graph structure with 14 nodes.
-- **`tests/test_tester_sqlglot_verification.py`** — Independent sqlglot verification: confirms sqlglot is active (not silently falling back), every column has lineage entry, cross-view chains through views 6-8, per-statement fallback behavior, dbt preprocessor safety, `requirements.txt` format, dynamic model layers in `app.js`.
-- All test files use `sys.path.insert(0, ...)` to import from the project root. Tests use `pytest` with no network calls; Flask endpoints tested via `app.test_client()`.
+- **`tests/test_lineage.py`** (56 tests) — Parses the actual `schema.txt` at module level. Tests table/view discovery, column extraction, column-level lineage for each view layer (stg, int, fct, mart), CTE resolution, cross-layer upstream/downstream, graph structure (14 nodes).
+- **`tests/test_tester_verification.py`** (54 tests) — Independent verification: no CTE/branch name leakage in graph edges, 5 deep lineage proofs, Flask API test_client checks, graph structural invariants, cross-layer chains, column presence, UI HTML structure, drag infrastructure.
+- **`tests/test_drag_verification.py`** (53 tests) — Structural verification of drag-to-reposition: PointerEvent usage, 4px threshold, click delegation, surgical edge update, coordinate space, sessionStorage, reset view, z-ordering, CSS cursors, pan/drag separation, Bezier path correctness, README content.
+- **`tests/test_modularization.py`** (30 tests) — Backward compatibility (`from app import app`), `app.py` size constraint (≤25 lines), `schema_service` caching, Blueprint route count, API endpoints, static file serving, circular import checks, data consistency between routes and schema_service.
+- **`tests/test_sqlglot_parser.py`** (41 tests) — sqlglot availability, all 14 models discovered, nested CTEs in views 6-8, UNION ALL merging, window functions, dbt Jinja preprocessing (source/ref templates), regex fallback for simple SQL, graph structure with 14 nodes.
+- **`tests/test_tester_sqlglot_verification.py`** (19 tests) — Confirms sqlglot is actually used (not silently falling back), per-statement fallback behavior, every column has lineage entry, cross-view chains through views 6-8, dbt preprocessor safety, requirements.txt format, dynamic MODEL_LAYERS in app.js.
+- **`tests/test_generate_schema.py`** (66 tests) — `build_schema()` structure (table/view counts per depth), SQL validity (semicolons, DROP/CREATE parity, primary keys), all 3 domains, dbt Jinja injection, SQL feature coverage (CTEs, CASE, window functions, UNION ALL), parser integration (generated schemas are parseable), CLI entry point (`main()` with flags).
+- All test files use `sys.path.insert(0, ...)` to add the project root. Tests run via `python -m pytest tests/ -v` (319 total reported in README).
 
 ## Extension Points
-- **`lineage_parser.py`**: sqlglot primary parser with per-statement regex fallback — new SQL constructs can be handled by extending `_process_create_view_sqlglot()` or adding new regex patterns. The `_preprocess_dbt_templates()` function is the hook for additional Jinja/template syntax.
-- **`schema.txt`**: The sole input file defining the data model. Adding tables or views here automatically flows through the parser → graph → UI pipeline.
-- **`routes.py` Blueprint**: New API endpoints can be added to the `bp` Blueprint without modifying `app.py`.
-- **`static/app.js` `computeModelLayers()`**: Topological layer computation is dynamic from graph edges — new models automatically position correctly without hardcoded layer assignments.
-- **`schema_service.py`**: `SCHEMA_PATH` resolution and caching strategy can be extended to support multiple schema files or dynamic reloading.
+- **Domain registry** in `generate_schema.py`: `DOMAINS` dict maps domain name → `(table_fn, view_fn)` tuple. Adding a new domain requires defining `_<domain>_tables()` and `_<domain>_views()` functions and registering them. **This is the most obvious integration point for a PostgreSQL-backed generator** — a new data source that introspects a live database instead of using hardcoded Python dataclass definitions.
+- **Parser strategy** in `lineage_parser.py`: `_HAS_SQLGLOT` flag gates primary (sqlglot) vs. fallback (regex) path. Per-statement fallback is automatic. New SQL constructs can be handled by extending `_process_create_view_sqlglot()` or the regex helpers.
+- **dbt preprocessing** in `lineage_parser.py`: `_preprocess_dbt_templates()` is regex-based and handles only `{{ source(...) }}` and `{{ ref(...) }}`. More complex Jinja (filters, conditionals, `{%- -%}`) would require a full Jinja renderer.
+- **Flask Blueprint** in `routes.py`: New API endpoints can be added to the `bp` Blueprint without touching `app.py`.
+- **Frontend layer computation** in `app.js`: `computeModelLayers()` dynamically assigns layers from graph edges; no hardcoded `MODEL_LAYERS` constant — new models render automatically.
 
 ## Structural Notes
-- **Module coupling**: `routes.py` → `schema_service.py` → `lineage_parser.py` is a one-way dependency chain. `app.py` only depends on `routes.py`. `lineage_parser.py` has no internal project imports.
-- **sqlglot is optional at import time**: `lineage_parser.py` uses a `try/except` around the sqlglot import and sets `_HAS_SQLGLOT` flag. If missing, the entire schema falls back to regex parsing.
-- **No database**: The app is file-based — `schema.txt` is read and parsed at startup, cached in module-level globals. There is no persistent state beyond session-scoped `sessionStorage` in the browser.
-- **Schema structure**: The 8 views form a layered DAG: raw tables → staging views (`stg_*`) → intermediate (`int_*`) → fact/mart (`fct_*`, `mart_*`) → reporting (`rpt_*`). CTE references are resolved transitively to real models before lineage is stored.
-- **Graph data model**: `get_lineage_graph()` returns `{nodes: [...], edges: [...]}` where edges are column-level `(source_model, source_column) → (target_model, target_column)`. Missing source models referenced in edges get synthetic nodes with `type: 'missing'`.
-- **Frontend is entirely static**: No build step, bundler, or framework. Plain JS IIFE, CSS, and HTML served by Flask's static file handler.
+- **No PostgreSQL connectivity exists anywhere in the codebase.** `generate_schema.py` builds DDL from hardcoded Python data structures only. `requirements.txt` has no database driver (`psycopg2`, `asyncpg`, etc.). The pending task "Implement the missing PostgreSQL-backed schema.txt generator feature" requires adding a database driver dependency and new code to introspect a live PostgreSQL catalog (`information_schema` or `pg_catalog`) and emit DDL.
+- The `generate_schema.py` `DOMAINS` registry, `TableDef`/`ColumnDef` dataclasses, and `_render_table()`/`build_schema()` builder functions provide a clear seam for a database-backed alternative: a new function could query PostgreSQL metadata, populate the same `TableDef`/`ColumnDef` structures, and feed them into the existing rendering pipeline.
+- `schema.txt` is the sole data contract between the generator and the web app. It is a plain-text file of PostgreSQL DDL statements (CREATE TABLE, CREATE VIEW). Any new generator mode must produce output in this format.
+- The web app (`schema_service.py`) reads `schema.txt` from the same directory as `schema_service.py` itself (`Path(__file__).parent / 'schema.txt'`).
+- Tests in `test_lineage.py`, `test_tester_verification.py`, `test_sqlglot_parser.py`, and `test_tester_sqlglot_verification.py` parse the actual `schema.txt` at module load time. Changes to `schema.txt` content will break hardcoded assertions (expected model names, column names, counts).
+- Flat module layout: all Python backend modules (`app.py`, `routes.py`, `schema_service.py`, `lineage_parser.py`, `generate_schema.py`) are peers in the project root — no package directory.
 
 ## Known Documentation
 - `README.md`

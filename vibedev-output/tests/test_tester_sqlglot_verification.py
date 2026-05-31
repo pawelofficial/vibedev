@@ -196,11 +196,14 @@ class TestRequirementsTxtFormat:
         content = req_path.read_text(encoding="utf-8")
         assert "sqlglot" in content.lower()
 
-    def test_exactly_two_deps(self):
+    def test_exactly_two_active_deps(self):
         req_path = SCHEMA_PATH.parent / "requirements.txt"
         content = req_path.read_text(encoding="utf-8").strip()
-        lines = [l.strip() for l in content.splitlines() if l.strip()]
-        assert len(lines) == 2, f"Expected 2 deps, got {len(lines)}: {lines}"
+        active_lines = [l.strip() for l in content.splitlines()
+                        if l.strip() and not l.strip().startswith("#")]
+        assert len(active_lines) == 2, (
+            f"Expected 2 active deps, got {len(active_lines)}: {active_lines}"
+        )
 
 
 class TestModelLayersInAppJs:

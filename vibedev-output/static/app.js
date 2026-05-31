@@ -21,6 +21,7 @@
     let nodeDragState = null; // { nodeId, startX, startY, origNodeX, origNodeY, hasMoved }
     const NODE_DRAG_THRESHOLD = 4; // px in screen-space before a press becomes a drag
     const SESSION_KEY = 'vibedev-lineage-positions';
+    const SCHEMA_CONFIG_KEY = 'vibedev-postgres-schema-config';
 
     // Constants
     const NODE_WIDTH = 250;
@@ -107,18 +108,31 @@
 
     async function init() {
         try {
-            const resp = await fetch('/api/graph');
-            graphData = await resp.json();
-            modelLayers = computeModelLayers(graphData.nodes, graphData.edges);
-            renderSidebar();
-            layoutGraph();
-            renderGraph();
+            setupSchemaControls();
+            await loadGraphData({ focusDefault: true });
             setupSearch();
             setupControls();
-            // Default focus on mart
-            focusMart();
         } catch (err) {
             console.error('Failed to load graph data:', err);
+        }
+    }
+
+    async function loadGraphData({ focusDefault = false } = {}) {
+        const resp = await fetch('/api/graph', { cache: 'no-store' });
+        if (!resp.ok) {
+            throw new Error(`Failed to load graph data (${resp.status})`);
+        }
+
+        graphData = await resp.json();
+        modelLayers = computeModelLayers(graphData.nodes, graphData.edges);
+        nodePositions = {};
+        columnYPositions = {};
+        renderSidebar();
+        layoutGraph();
+        renderGraph();
+
+        if (focusDefault) {
+            focusMart();
         }
     }
 
@@ -744,6 +758,76 @@
     function setupControls() {
         document.getElementById('btn-reset').addEventListener('click', resetView);
         document.getElementById('btn-focus-mart').addEventListener('click', focusMart);
+    }
+
+    function setupSchemaControls() {
+        const dbInput = document.getElementById('schema-db');
+        const schemasInput = document.getElementById('schema-schemas');
+        const outputInput = document.getElementById('schema-output');
+        const button = document.getElementById('btn-generate-schema');
+        const status = document.getElementById('schema-status');
+
+        if (!dbInput || !schemasInput || !outputInput || !button || !status) return;
+
+        const saved = loadSchemaConfig();
+        dbInput.value = saved.database === 'lineage_app' ? '' : saved.database || '';
+        schemasInput.value = saved.schemas || schemasInput.placeholder || 'public';
+        outputInput.value = saved.output || outputInput.value || 'schema.txt';
+
+        button.addEventListener('click', async () => {
+            const config = {
+                database: dbInput.value.trim(),
+                schemas: schemasInput.value.trim(),
+                output: outputInput.value.trim() || 'schema.txt',
+            };
+            saveSchemaConfig(config);
+
+            button.disabled = true;
+            setSchemaStatus('Regenerating schema.txt...', 'working');
+
+            try {
+                const resp = await fetch('/api/generate-schema', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config),
+                });
+                const result = await resp.json();
+                if (!resp.ok || result.error) {
+                    throw new Error(result.error || `Request failed (${resp.status})`);
+                }
+
+                clearPositionsFromSession();
+                await loadGraphData({ focusDefault: true });
+                setSchemaStatus(
+                    `Generated ${result.table_count} tables and ${result.view_count} views.`,
+                    'success'
+                );
+            } catch (err) {
+                console.error('Schema generation failed:', err);
+                setSchemaStatus(err.message || 'Schema generation failed.', 'error');
+            } finally {
+                button.disabled = false;
+            }
+        });
+    }
+
+    function loadSchemaConfig() {
+        try {
+            return JSON.parse(localStorage.getItem(SCHEMA_CONFIG_KEY) || '{}');
+        } catch (_) {
+            return {};
+        }
+    }
+
+    function saveSchemaConfig(config) {
+        localStorage.setItem(SCHEMA_CONFIG_KEY, JSON.stringify(config));
+    }
+
+    function setSchemaStatus(message, type) {
+        const status = document.getElementById('schema-status');
+        if (!status) return;
+        status.textContent = message;
+        status.className = `schema-status ${type || ''}`.trim();
     }
 
     function resetView() {

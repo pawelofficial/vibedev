@@ -283,11 +283,15 @@ class TestNoDependencyChanges:
     def test_requirements_has_expected_deps(self):
         req_path = Path(__file__).parent.parent / "requirements.txt"
         content = req_path.read_text(encoding="utf-8").strip()
-        lines = [l.strip() for l in content.splitlines() if l.strip()]
-        # Should contain flask and sqlglot
+        active_lines = [l.strip() for l in content.splitlines()
+                        if l.strip() and not l.strip().startswith("#")]
+        # Should contain flask and sqlglot as active (uncommented) deps
         assert "flask" in content.lower()
         assert "sqlglot" in content.lower()
-        assert len(lines) == 2, f"Expected flask and sqlglot in requirements.txt, got: {lines}"
+        assert len(active_lines) == 2, (
+            f"Expected flask and sqlglot as active deps in requirements.txt, "
+            f"got: {active_lines}"
+        )
 
 
 # ------------------------------------------------------------------

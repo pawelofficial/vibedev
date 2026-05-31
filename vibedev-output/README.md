@@ -63,6 +63,38 @@ python generate_schema.py -o my_schema.txt
 
 The generated SQL exercises CTEs, CASE, COALESCE, JOINs, UNION ALL, window functions (DENSE_RANK, NTILE, LAG, RANK), filtered aggregates, PostgreSQL casts, DATE_TRUNC, and NULLIF — all constructs the lineage parser handles.
 
+### PostgreSQL Introspection
+
+Generate `schema.txt` from a live PostgreSQL database instead of in-memory domain definitions. Tables, columns, primary keys, foreign keys, and view definitions are introspected from `information_schema` and `pg_views`.
+
+```bash
+# Introspect from a local PostgreSQL database
+python generate_schema.py --from-postgres "host=localhost dbname=mydb user=me"
+
+# Using a PostgreSQL URI
+python generate_schema.py --from-postgres "postgresql://me@localhost/mydb"
+
+# Specify a non-default database schema
+python generate_schema.py --from-postgres "host=db dbname=app" --pg-schema analytics
+
+# Preview without writing a file
+python generate_schema.py --from-postgres "host=localhost dbname=mydb" --dry-run
+
+# Custom output path
+python generate_schema.py --from-postgres "host=localhost dbname=mydb" -o my_schema.txt
+```
+
+**Requires**: `psycopg2-binary` (`pip install psycopg2-binary`). This is an optional dependency — the in-memory domain generators work without it.
+
+**Programmatic API**: `build_schema_from_postgres(connection_string, pg_schema="public")` returns the DDL string.
+
+**What it introspects**:
+- Base tables with column types, NOT NULL, DEFAULT, PRIMARY KEY constraints
+- Foreign key references (rendered as `REFERENCES target(column)`)
+- Tables ordered by dependency (FK targets before FK sources)
+- View definitions (the full SELECT body from `pg_views`)
+- Sequence/nextval defaults are automatically filtered out
+
 ## Setup
 
 ```bash
@@ -86,7 +118,7 @@ python app.py
 ## Test
 
 ```bash
-# Run the full test suite (319 tests)
+# Run the full test suite (385 tests)
 python -m pytest tests/ -v
 
 # Run only the lineage-extraction tests (56 tests)
@@ -110,6 +142,9 @@ python -m pytest tests/test_tester_sqlglot_verification.py -v
 # Run only the schema generator tests (66 tests)
 python -m pytest tests/test_generate_schema.py -v
 
+# Run only the PostgreSQL introspection tests (66 tests)
+python -m pytest tests/test_postgres_introspection.py -v
+
 # Run specific test classes
 python -m pytest tests/test_lineage.py::TestSpecificLineageRequirements -v
 python -m pytest tests/test_lineage.py::TestMartCustomerLtvSegments -v
@@ -126,7 +161,7 @@ python -m pytest tests/test_sqlglot_parser.py::TestNestedCTEs -v
 ├── routes.py                       # Flask Blueprint with all route handlers
 ├── schema_service.py               # Schema loading service (parses schema.txt, caches result)
 ├── lineage_parser.py               # SQL DDL parser + lineage extraction engine
-├── generate_schema.py              # Standalone schema.txt generator (3 domains, configurable depth/tables)
+├── generate_schema.py              # Schema.txt generator (3 domains + PostgreSQL introspection)
 ├── schema.txt                      # Input SQL schema (6 tables, 8 views)
 ├── static/
 │   ├── index.html                  # Main UI page
@@ -139,8 +174,9 @@ python -m pytest tests/test_sqlglot_parser.py::TestNestedCTEs -v
 │   ├── test_modularization.py             # 30 tests: module structure, imports, caching, backward compat
 │   ├── test_sqlglot_parser.py             # 41 tests: sqlglot parsing, CTEs, UNION ALL, window funcs, dbt templates
 │   ├── test_tester_sqlglot_verification.py # 19 tests: sqlglot integration, cross-view chains, fallback path
-│   └── test_generate_schema.py            # 66 tests: schema generator domains, depth, tables, dbt, CLI flags
-├── requirements.txt                # Python dependencies
+│   ├── test_generate_schema.py            # 66 tests: schema generator domains, depth, tables, dbt, CLI flags
+│   └── test_postgres_introspection.py     # 66 tests: PostgreSQL introspection, type mapping, CLI flags
+├── requirements.txt                # Python dependencies (psycopg2-binary optional)
 └── README.md                       # This file
 ```
 

@@ -18,6 +18,23 @@
 
         <div class="main-layout">
             <aside id="sidebar">
+                <div class="sidebar-section schema-generator">
+                    <h3>PostgreSQL Schema</h3>
+                    <label>
+                        Database
+                        <input type="text" id="schema-db" placeholder="from .env">
+                    </label>
+                    <label>
+                        Schemas
+                        <input type="text" id="schema-schemas" placeholder="dev">
+                    </label>
+                    <label>
+                        Output
+                        <input type="text" id="schema-output" value="schema.txt">
+                    </label>
+                    <button id="btn-generate-schema">Regenerate schema.txt</button>
+                    <div id="schema-status" class="schema-status"></div>
+                </div>
                 <div class="sidebar-section">
                     <h3>Models</h3>
                     <div id="model-list"></div>

@@ -28,3 +28,11 @@ def load_schema():
         _models = parse_schema(schema_text)
         _graph = get_lineage_graph(_models)
     return _models, _graph
+
+
+def reload_schema():
+    """Clear the schema cache and parse the current schema.txt from disk."""
+    global _models, _graph
+    _models = None
+    _graph = None
+    return load_schema()

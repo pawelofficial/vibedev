@@ -40,6 +40,7 @@ Build a column-lineage web app for the SQL models in schema.txt.
 - [ ] **Run full pytest suite and fix regressions**: Execute `python -m pytest tests/ -v` and fix all failures introduced by the refactor.
 - [ ] **Update `README.md`**: Add `sqlglot` to the Setup/Install section, document the new parser capabilities (dbt syntax, all 8 views now parsed), update the test count, and note the sqlglot+regex-fallback architecture under the Parser section.
 - [x] create a standalone script for schema.txt file generator.
+- [ ] Implement the missing PostgreSQL-backed schema.txt generator feature.
 
 ## History
 - 2026-05-24 - Request: Build a column-lineage web app for the SQL models in schema.txt.
@@ -63,3 +64,5 @@ Build a column-lineage web app for the SQL models in schema.txt.
 - 2026-05-26 - Completed: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 - 2026-05-31 - Request: create a standalone script for schema.txt file generator.
 - 2026-05-31 - Completed: create a standalone script for schema.txt file generator.
+- 2026-05-31 - Request: Implement the missing PostgreSQL-backed schema.txt generator feature.
+- 2026-05-31 - Request: Implement the missing PostgreSQL-backed schema.txt generator feature.

@@ -1331,6 +1331,334 @@ DOMAINS = {
 
 
 # ---------------------------------------------------------------------------
+# PostgreSQL introspection
+# ---------------------------------------------------------------------------
+
+def _pg_import():
+    """Lazily import psycopg2, raising a clear error if not installed."""
+    try:
+        import psycopg2
+        return psycopg2
+    except ImportError:
+        raise ImportError(
+            "psycopg2 is required for PostgreSQL introspection. "
+            "Install it with: pip install psycopg2-binary"
+        )
+
+
+# Map PostgreSQL type OIDs / information_schema names to DDL-friendly types.
+_PG_TYPE_MAP = {
+    "bigint": "BIGINT",
+    "integer": "INTEGER",
+    "smallint": "SMALLINT",
+    "numeric": "NUMERIC",
+    "real": "REAL",
+    "double precision": "DOUBLE PRECISION",
+    "boolean": "BOOLEAN",
+    "text": "TEXT",
+    "character varying": "TEXT",
+    "character": "TEXT",
+    "date": "DATE",
+    "timestamp without time zone": "TIMESTAMP",
+    "timestamp with time zone": "TIMESTAMPTZ",
+    "time without time zone": "TIME",
+    "time with time zone": "TIMETZ",
+    "bytea": "BYTEA",
+    "json": "JSON",
+    "jsonb": "JSONB",
+    "uuid": "UUID",
+    "inet": "INET",
+    "cidr": "CIDR",
+    "macaddr": "MACADDR",
+    "interval": "INTERVAL",
+    "xml": "XML",
+    "money": "MONEY",
+    "point": "POINT",
+    "line": "LINE",
+    "circle": "CIRCLE",
+    "box": "BOX",
+    "path": "PATH",
+    "polygon": "POLYGON",
+    "bit": "BIT",
+    "bit varying": "BIT VARYING",
+    "tsvector": "TSVECTOR",
+    "tsquery": "TSQUERY",
+    "oid": "OID",
+    "ARRAY": "TEXT[]",
+    "USER-DEFINED": "TEXT",
+}
+
+
+def _pg_format_type(
+    data_type: str,
+    char_max_len: Optional[int],
+    numeric_precision: Optional[int],
+    numeric_scale: Optional[int],
+    udt_name: Optional[str] = None,
+) -> str:
+    """Convert information_schema type info to a DDL type string."""
+    mapped = _PG_TYPE_MAP.get(data_type, data_type.upper())
+
+    # character varying(N) → VARCHAR(N)
+    if data_type == "character varying" and char_max_len is not None:
+        return f"VARCHAR({char_max_len})"
+    if data_type == "character" and char_max_len is not None:
+        return f"CHAR({char_max_len})"
+
+    # numeric(P, S) → NUMERIC(P, S)
+    if data_type == "numeric" and numeric_precision is not None:
+        if numeric_scale is not None and numeric_scale > 0:
+            return f"NUMERIC({numeric_precision}, {numeric_scale})"
+        return f"NUMERIC({numeric_precision})"
+
+    # Array types → use the underlying type name
+    if data_type == "ARRAY" and udt_name:
+        base = udt_name.lstrip("_").upper()
+        return f"{base}[]"
+
+    # User-defined (enum, composite) — use udt_name if available
+    if data_type == "USER-DEFINED" and udt_name:
+        return udt_name.upper()
+
+    return mapped
+
+
+def _pg_introspect_tables(
+    conn,
+    pg_schema: str = "public",
+) -> List[TableDef]:
+    """Query information_schema for base tables and return TableDef list."""
+    cur = conn.cursor()
+
+    # 1. Discover tables in dependency-safe order (tables with no FKs first).
+    cur.execute("""
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = %s
+          AND table_type = 'BASE TABLE'
+        ORDER BY table_name
+    """, (pg_schema,))
+    table_names = [row[0] for row in cur.fetchall()]
+
+    if not table_names:
+        cur.close()
+        return []
+
+    # 2. Discover primary key columns per table.
+    cur.execute("""
+        SELECT kcu.table_name, kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON kcu.constraint_name = tc.constraint_name
+         AND kcu.table_schema = tc.table_schema
+        WHERE tc.table_schema = %s
+          AND tc.constraint_type = 'PRIMARY KEY'
+    """, (pg_schema,))
+    pk_columns: Dict[str, set] = {}
+    for tname, cname in cur.fetchall():
+        pk_columns.setdefault(tname, set()).add(cname)
+
+    # 3. Discover foreign key references per column.
+    cur.execute("""
+        SELECT
+            kcu.table_name AS from_table,
+            kcu.column_name AS from_column,
+            ccu.table_name AS to_table,
+            ccu.column_name AS to_column
+        FROM information_schema.referential_constraints rc
+        JOIN information_schema.key_column_usage kcu
+          ON kcu.constraint_name = rc.constraint_name
+         AND kcu.table_schema = rc.constraint_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON ccu.constraint_name = rc.unique_constraint_name
+         AND ccu.table_schema = rc.unique_constraint_schema
+        WHERE rc.constraint_schema = %s
+    """, (pg_schema,))
+    fk_refs: Dict[Tuple[str, str], str] = {}
+    for from_t, from_c, to_t, to_c in cur.fetchall():
+        fk_refs[(from_t, from_c)] = f"REFERENCES {to_t}({to_c})"
+
+    # 4. Discover columns for each table.
+    cur.execute("""
+        SELECT
+            table_name,
+            column_name,
+            data_type,
+            character_maximum_length,
+            numeric_precision,
+            numeric_scale,
+            is_nullable,
+            column_default,
+            ordinal_position,
+            udt_name
+        FROM information_schema.columns
+        WHERE table_schema = %s
+          AND table_name = ANY(%s)
+        ORDER BY table_name, ordinal_position
+    """, (pg_schema, table_names))
+
+    columns_by_table: Dict[str, List[ColumnDef]] = {}
+    for (tname, cname, dtype, char_max, num_prec, num_scale,
+         is_nullable, col_default, _ordinal, udt_name) in cur.fetchall():
+
+        sql_type = _pg_format_type(dtype, char_max, num_prec, num_scale, udt_name)
+
+        # Build constraints string
+        constraint_parts = []
+        if tname in pk_columns and cname in pk_columns[tname]:
+            constraint_parts.append("PRIMARY KEY")
+        elif is_nullable == "NO":
+            constraint_parts.append("NOT NULL")
+
+        if col_default is not None:
+            # Skip auto-generated defaults like nextval(...) sequences
+            default_str = str(col_default)
+            if not default_str.startswith("nextval("):
+                constraint_parts.append(f"DEFAULT {default_str}")
+
+        constraints = " ".join(constraint_parts)
+        fk_ref = fk_refs.get((tname, cname), "")
+
+        col = ColumnDef(
+            name=cname,
+            sql_type=sql_type,
+            constraints=constraints,
+            fk_ref=fk_ref,
+        )
+        columns_by_table.setdefault(tname, []).append(col)
+
+    cur.close()
+
+    # 5. Build dependency-ordered table list.
+    # Tables referenced by FKs should appear before tables that reference them.
+    fk_deps: Dict[str, set] = {}
+    for (from_t, _), ref_str in fk_refs.items():
+        # Parse "REFERENCES to_table(to_col)"
+        import re
+        m = re.match(r"REFERENCES\s+(\w+)", ref_str)
+        if m:
+            to_t = m.group(1)
+            if to_t in table_names:
+                fk_deps.setdefault(from_t, set()).add(to_t)
+
+    # Simple topological sort
+    ordered: List[str] = []
+    visited: set = set()
+
+    def _topo_visit(name: str) -> None:
+        if name in visited:
+            return
+        visited.add(name)
+        for dep in fk_deps.get(name, set()):
+            _topo_visit(dep)
+        ordered.append(name)
+
+    for tn in table_names:
+        _topo_visit(tn)
+
+    tables = []
+    for tn in ordered:
+        cols = columns_by_table.get(tn, [])
+        if cols:
+            tables.append(TableDef(name=tn, columns=cols))
+
+    return tables
+
+
+def _pg_introspect_views(
+    conn,
+    pg_schema: str = "public",
+) -> List[str]:
+    """Query pg_views for view definitions and return CREATE VIEW SQL strings."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT viewname, definition
+        FROM pg_views
+        WHERE schemaname = %s
+        ORDER BY viewname
+    """, (pg_schema,))
+
+    view_sqls: List[str] = []
+    for viewname, definition in cur.fetchall():
+        # pg_views.definition is the SELECT body (without CREATE VIEW ... AS).
+        # Normalize: strip trailing semicolon/whitespace from definition,
+        # then wrap in CREATE VIEW.
+        defn = definition.strip().rstrip(";").strip()
+        sql = f"CREATE VIEW {viewname} AS\n{defn};"
+        view_sqls.append(sql)
+
+    cur.close()
+    return view_sqls
+
+
+def build_schema_from_postgres(
+    connection_string: str,
+    pg_schema: str = "public",
+) -> str:
+    """Introspect a live PostgreSQL database and produce a schema.txt DDL string.
+
+    Connects to the database specified by *connection_string*, reads table and
+    view definitions from ``information_schema`` and ``pg_views``, and returns a
+    DDL string in the same format as ``build_schema()`` — compatible with the
+    lineage parser and the column-lineage web app.
+
+    Args:
+        connection_string: A PostgreSQL connection string (DSN) such as
+            ``"host=localhost dbname=mydb user=me password=secret"`` or a
+            ``postgresql://`` URI.
+        pg_schema: The database schema to introspect (default: ``"public"``).
+
+    Returns:
+        The full SQL DDL text ready to write to ``schema.txt``.
+
+    Raises:
+        ImportError: If ``psycopg2`` is not installed.
+        psycopg2.OperationalError: If the connection fails.
+        ValueError: If no tables or views are found in the specified schema.
+    """
+    psycopg2 = _pg_import()
+
+    conn = psycopg2.connect(connection_string)
+    try:
+        tables = _pg_introspect_tables(conn, pg_schema)
+        view_sqls = _pg_introspect_views(conn, pg_schema)
+    finally:
+        conn.close()
+
+    if not tables and not view_sqls:
+        raise ValueError(
+            f"No tables or views found in schema '{pg_schema}'. "
+            "Check the schema name and database connection."
+        )
+
+    view_names = _collect_view_names(view_sqls)
+
+    parts: List[str] = []
+
+    # ---- DROP statements (reverse dependency order) ----
+    for vn in reversed(view_names):
+        parts.append(f"DROP VIEW IF EXISTS {vn};")
+    if view_names:
+        parts.append("")
+    for t in reversed(tables):
+        parts.append(f"DROP TABLE IF EXISTS {t.name};")
+    if tables:
+        parts.append("")
+
+    # ---- CREATE TABLE statements ----
+    for t in tables:
+        parts.append(_render_table(t))
+        parts.append("")
+
+    # ---- CREATE VIEW statements ----
+    for vsql in view_sqls:
+        parts.append(vsql)
+        parts.append("")
+
+    return "\n".join(parts) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Schema builder
 # ---------------------------------------------------------------------------
 
@@ -1427,7 +1755,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         description="Generate a schema.txt file with SQL DDL for the column-lineage app.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
-            Domains:
+            Domains (for in-memory generation):
               ecommerce   Customers, orders, payments, products (default)
               healthcare  Patients, encounters, diagnoses, procedures, providers
               saas        Accounts, users, subscriptions, events, invoices
@@ -1437,6 +1765,17 @@ def main(argv: Optional[List[str]] = None) -> None:
               2  + intermediate / fact
               3  + mart
               4  + reporting (default)
+
+            PostgreSQL introspection:
+              --from-postgres DSN   Connect to a live PostgreSQL database and
+                                    extract tables/views instead of generating
+                                    from in-memory domain definitions.
+              --pg-schema NAME      Database schema to introspect (default: public).
+
+            Example PostgreSQL usage:
+              python generate_schema.py --from-postgres "host=localhost dbname=mydb user=me"
+              python generate_schema.py --from-postgres "postgresql://me@localhost/mydb"
+              python generate_schema.py --from-postgres "host=db port=5432 dbname=app" --pg-schema analytics -o schema.txt
         """),
     )
     parser.add_argument(
@@ -1479,16 +1818,37 @@ def main(argv: Optional[List[str]] = None) -> None:
         action="store_true",
         help="Print to stdout instead of writing a file",
     )
+    parser.add_argument(
+        "--from-postgres",
+        metavar="DSN",
+        default=None,
+        help="PostgreSQL connection string (DSN or URI). When set, introspects "
+             "a live database instead of generating from in-memory domains. "
+             "Requires psycopg2-binary.",
+    )
+    parser.add_argument(
+        "--pg-schema",
+        default="public",
+        help="Database schema to introspect when using --from-postgres (default: public)",
+    )
 
     args = parser.parse_args(argv)
 
-    schema_text = build_schema(
-        domain=args.domain,
-        table_count=args.tables,
-        depth=args.depth,
-        include_dbt=args.include_dbt,
-        seed=args.seed,
-    )
+    if args.from_postgres:
+        # PostgreSQL introspection mode
+        schema_text = build_schema_from_postgres(
+            connection_string=args.from_postgres,
+            pg_schema=args.pg_schema,
+        )
+    else:
+        # In-memory domain generation mode
+        schema_text = build_schema(
+            domain=args.domain,
+            table_count=args.tables,
+            depth=args.depth,
+            include_dbt=args.include_dbt,
+            seed=args.seed,
+        )
 
     if args.dry_run:
         sys.stdout.write(schema_text)
@@ -1498,8 +1858,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         # Summary stats
         table_count = schema_text.count("CREATE TABLE")
         view_count = schema_text.count("CREATE VIEW")
+        source = "PostgreSQL" if args.from_postgres else args.domain
         print(f"Wrote {output_path} ({table_count} tables, {view_count} views, "
-              f"{len(schema_text)} bytes)")
+              f"{len(schema_text)} bytes, source: {source})")
 
 
 if __name__ == "__main__":
