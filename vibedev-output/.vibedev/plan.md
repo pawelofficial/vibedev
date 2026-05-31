@@ -39,6 +39,7 @@ Build a column-lineage web app for the SQL models in schema.txt.
 - [ ] **Add fallback-path tests**: Add tests that feed deliberately malformed SQL (or a dialect sqlglot doesn't support) and verify the regex fallback produces the same output as the current parser.
 - [ ] **Run full pytest suite and fix regressions**: Execute `python -m pytest tests/ -v` and fix all failures introduced by the refactor.
 - [ ] **Update `README.md`**: Add `sqlglot` to the Setup/Install section, document the new parser capabilities (dbt syntax, all 8 views now parsed), update the test count, and note the sqlglot+regex-fallback architecture under the Parser section.
+- [x] create a standalone script for schema.txt file generator.
 
 ## History
 - 2026-05-24 - Request: Build a column-lineage web app for the SQL models in schema.txt.
@@ -60,3 +61,5 @@ Build a column-lineage web app for the SQL models in schema.txt.
 - 2026-05-26 - Analyst review: Let me first examine the existing codebase to understand the current parser, schema, tests, and dependencies before challenging the plan. Now I have a thorough understanding of the codebase. Let me compile my analysis. ## Missing Requirements - **dbt Jinja preprocessing strategy is undefin...
 - 2026-05-26 - Request: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
 - 2026-05-26 - Completed: Use `sqlglot` when parsing `schema.txt` so SQL DDL and SELECT expressions are parsed more robustly than the current regex-first approach.
+- 2026-05-31 - Request: create a standalone script for schema.txt file generator.
+- 2026-05-31 - Completed: create a standalone script for schema.txt file generator.

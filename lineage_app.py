@@ -27,7 +27,7 @@ vibedev.set_team(
     [
         #("business_analyst", "claude-opus-4-6"),
         ("developer", "claude-opus-4-6"),
-        #("tester", "claude-opus-4-6"),
+        ("tester", "claude-opus-4-6"),
     ]
 )
 
@@ -143,7 +143,16 @@ FEATURE_PROMPT="""Continue the existing lineage app in this workspace. Do not re
 """
 
 FEATURE_PROMPT="""Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
-    
+    implement this fueature: 
+        - create a standalone script for schema.txt file generator. Currently it should be able to generate a schema.txt file by querying postgresql information schema. Make the database and schema lists that are to be scanned configurable. 
+        - you can test whether it works using my local postgresql, here are the credentials:
+PG_PASSWORD=admin
+PG_USER=postgres
+PG_HOST=localhost
+PG_PORT=5433
+
+i installed schema.txt objects in lineage_app database, dev schema. 
+Once the schema.txt generator is created make a button in UI that will trigger this generation the configs required for the generator (db,schema) should be configurable and saved in the ui. The credentials for auth should be taken from .env file - you can put the credentials i gave you into this .env file.
 """
 
 

@@ -30,6 +30,39 @@ The parser handles:
 - Window functions (DENSE_RANK, NTILE, etc.)
 - Views depending on other views (multi-layer lineage)
 
+## Schema Generator
+
+A standalone script (`generate_schema.py`) that produces `schema.txt` files compatible with the lineage parser. Useful for generating realistic test schemas across different business domains.
+
+```bash
+# Default e-commerce schema, full depth
+python generate_schema.py
+
+# Healthcare or SaaS domain
+python generate_schema.py --domain healthcare
+python generate_schema.py --domain saas
+
+# Control output size
+python generate_schema.py --tables 3 --depth 2
+
+# Add dbt Jinja syntax ({{ source(...) }})
+python generate_schema.py --include-dbt
+
+# Preview without writing a file
+python generate_schema.py --dry-run
+
+# Custom output path
+python generate_schema.py -o my_schema.txt
+```
+
+**Domains**: `ecommerce` (default), `healthcare`, `saas` — each with domain-realistic tables, columns, foreign keys, and layered views (staging → intermediate/fact → mart → reporting).
+
+**Depth**: `--depth 1..4` controls how many view layers are generated.
+
+**Programmatic API**: `build_schema(domain, table_count, depth, include_dbt, seed)` returns the DDL string for use from Python.
+
+The generated SQL exercises CTEs, CASE, COALESCE, JOINs, UNION ALL, window functions (DENSE_RANK, NTILE, LAG, RANK), filtered aggregates, PostgreSQL casts, DATE_TRUNC, and NULLIF — all constructs the lineage parser handles.
+
 ## Setup
 
 ```bash
@@ -53,7 +86,7 @@ python app.py
 ## Test
 
 ```bash
-# Run the full test suite (253 tests)
+# Run the full test suite (319 tests)
 python -m pytest tests/ -v
 
 # Run only the lineage-extraction tests (56 tests)
@@ -74,6 +107,9 @@ python -m pytest tests/test_sqlglot_parser.py -v
 # Run only the sqlglot verification tests (19 tests)
 python -m pytest tests/test_tester_sqlglot_verification.py -v
 
+# Run only the schema generator tests (66 tests)
+python -m pytest tests/test_generate_schema.py -v
+
 # Run specific test classes
 python -m pytest tests/test_lineage.py::TestSpecificLineageRequirements -v
 python -m pytest tests/test_lineage.py::TestMartCustomerLtvSegments -v
@@ -90,6 +126,7 @@ python -m pytest tests/test_sqlglot_parser.py::TestNestedCTEs -v
 ├── routes.py                       # Flask Blueprint with all route handlers
 ├── schema_service.py               # Schema loading service (parses schema.txt, caches result)
 ├── lineage_parser.py               # SQL DDL parser + lineage extraction engine
+├── generate_schema.py              # Standalone schema.txt generator (3 domains, configurable depth/tables)
 ├── schema.txt                      # Input SQL schema (6 tables, 8 views)
 ├── static/
 │   ├── index.html                  # Main UI page
@@ -101,7 +138,8 @@ python -m pytest tests/test_sqlglot_parser.py::TestNestedCTEs -v
 │   ├── test_drag_verification.py          # 53 tests: drag-feature structural verification
 │   ├── test_modularization.py             # 30 tests: module structure, imports, caching, backward compat
 │   ├── test_sqlglot_parser.py             # 41 tests: sqlglot parsing, CTEs, UNION ALL, window funcs, dbt templates
-│   └── test_tester_sqlglot_verification.py # 19 tests: sqlglot integration, cross-view chains, fallback path
+│   ├── test_tester_sqlglot_verification.py # 19 tests: sqlglot integration, cross-view chains, fallback path
+│   └── test_generate_schema.py            # 66 tests: schema generator domains, depth, tables, dbt, CLI flags
 ├── requirements.txt                # Python dependencies
 └── README.md                       # This file
 ```
