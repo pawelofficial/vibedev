@@ -204,24 +204,31 @@ class TestRequirementsTxtFormat:
 
 
 class TestModelLayersInAppJs:
-    """Verify all 14 models have layer assignments in app.js."""
+    """Verify model layers are computed dynamically from graph edges in app.js."""
 
-    def test_all_models_in_model_layers(self):
+    def test_compute_model_layers_function_exists(self):
         js_path = SCHEMA_PATH.parent / "static" / "app.js"
         js_content = js_path.read_text(encoding="utf-8")
-        for model_name in MODELS:
-            assert f"'{model_name}'" in js_content, (
-                f"Model {model_name} not found in app.js MODEL_LAYERS"
-            )
+        assert "function computeModelLayers" in js_content, (
+            "app.js must define a computeModelLayers function"
+        )
 
-    def test_nosuchtable_has_layer_0(self):
+    def test_no_hardcoded_model_layers_constant(self):
         js_path = SCHEMA_PATH.parent / "static" / "app.js"
         js_content = js_path.read_text(encoding="utf-8")
-        assert "'nosuchtable': 0" in js_content
+        assert "const MODEL_LAYERS" not in js_content, (
+            "app.js must not have a hardcoded MODEL_LAYERS constant"
+        )
 
-    def test_new_views_have_layers(self):
+    def test_dynamic_layers_called_before_layout(self):
         js_path = SCHEMA_PATH.parent / "static" / "app.js"
         js_content = js_path.read_text(encoding="utf-8")
-        assert "'rpt_customer_growth_cohorts'" in js_content
-        assert "'mart_segment_health_snapshot'" in js_content
-        assert "'rpt_executive_revenue_dashboard'" in js_content
+        # computeModelLayers must be called before layoutGraph in init()
+        compute_pos = js_content.find("computeModelLayers(")
+        layout_pos = js_content.find("layoutGraph()")
+        assert compute_pos != -1 and layout_pos != -1, (
+            "Both computeModelLayers and layoutGraph must be called"
+        )
+        assert compute_pos < layout_pos, (
+            "computeModelLayers must be called before layoutGraph"
+        )

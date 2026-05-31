@@ -27,7 +27,7 @@ vibedev.set_team(
     [
         #("business_analyst", "claude-opus-4-6"),
         ("developer", "claude-opus-4-6"),
-        ("tester", "claude-opus-4-6"),
+        #("tester", "claude-opus-4-6"),
     ]
 )
 
@@ -125,7 +125,17 @@ Requirements:
 - Run the relevant pytest suite and fix regressions introduced by the parser refactor.
 - Update `README.md` and `requirements.txt` if dependencies, parser capabilities, or setup instructions change.
 """
+FEATURE_PROMPT="""Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
 
+Implement this feature: 
+    - app.js currently hardcodes names of the tables that appear in schema.txt this should not be the case because  schema.txt is an input file containing sql and each time it will be different. Can you fix this ?
+"""
+
+FEATURE_PROMPT="""Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
+
+Implement this feature: 
+    the sql in schema.txt may contain references to tables or views that do not have a corresponding ddl - lets call those objects missing tables. Make sure that the visualization handles those scnearios and when a sql query references something such missing table, this relationship still displays in the ui. The missing tables can have red color 
+"""
 
 USER_PROMPT=FEATURE_PROMPT
 

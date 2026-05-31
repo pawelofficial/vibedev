@@ -30,23 +30,77 @@
     const LAYER_GAP_X = 350;
     const NODE_GAP_Y = 30;
 
-    // Model layer order (left to right)
-    const MODEL_LAYERS = {
-        'nosuchtable': 0,
-        'raw_customers': 0,
-        'raw_orders': 0,
-        'raw_order_items': 0,
-        'raw_products': 0,
-        'raw_payments': 0,
-        'stg_orders_enriched': 1,
-        'stg_line_items_priced': 1,
-        'int_customer_order_metrics': 2,
-        'fct_customer_revenue_daily': 2,
-        'mart_customer_ltv_segments': 3,
-        'rpt_customer_growth_cohorts': 4,
-        'mart_segment_health_snapshot': 4,
-        'rpt_executive_revenue_dashboard': 5,
-    };
+    // Model layer assignments — computed dynamically from graph edges in init()
+    let modelLayers = {};
+
+    /**
+     * Compute topological layer assignments from graph edges.
+     * Nodes with no incoming edges are layer 0 (source/raw tables).
+     * All other nodes get layer = max(layer of upstream nodes) + 1.
+     */
+    function computeModelLayers(nodes, edges) {
+        const layers = {};
+
+        // Build adjacency: for each node, collect its upstream (source) nodes
+        const upstreamMap = {}; // targetModel -> Set of sourceModels
+        const allNodeIds = new Set();
+        nodes.forEach(n => {
+            allNodeIds.add(n.id);
+            upstreamMap[n.id] = new Set();
+        });
+        edges.forEach(e => {
+            if (allNodeIds.has(e.target_model) && allNodeIds.has(e.source_model)) {
+                upstreamMap[e.target_model].add(e.source_model);
+            }
+        });
+
+        // Iteratively assign layers (BFS / Kahn-style)
+        // Layer 0: nodes with no upstream dependencies
+        const resolved = new Set();
+        const queue = [];
+        for (const nodeId of allNodeIds) {
+            if (upstreamMap[nodeId].size === 0) {
+                layers[nodeId] = 0;
+                resolved.add(nodeId);
+                queue.push(nodeId);
+            }
+        }
+
+        // Process until all nodes are assigned
+        // For each unresolved node, if all its upstreams are resolved,
+        // assign layer = max(upstream layers) + 1
+        let safety = 0;
+        const maxIterations = allNodeIds.size * allNodeIds.size;
+        while (resolved.size < allNodeIds.size && safety < maxIterations) {
+            safety++;
+            for (const nodeId of allNodeIds) {
+                if (resolved.has(nodeId)) continue;
+                const ups = upstreamMap[nodeId];
+                let allResolved = true;
+                let maxLayer = 0;
+                for (const up of ups) {
+                    if (!resolved.has(up)) {
+                        allResolved = false;
+                        break;
+                    }
+                    maxLayer = Math.max(maxLayer, layers[up]);
+                }
+                if (allResolved) {
+                    layers[nodeId] = maxLayer + 1;
+                    resolved.add(nodeId);
+                }
+            }
+        }
+
+        // Any remaining nodes (e.g. in cycles) get layer 0 as fallback
+        for (const nodeId of allNodeIds) {
+            if (layers[nodeId] === undefined) {
+                layers[nodeId] = 0;
+            }
+        }
+
+        return layers;
+    }
 
     // Init
     document.addEventListener('DOMContentLoaded', init);
@@ -55,6 +109,7 @@
         try {
             const resp = await fetch('/api/graph');
             graphData = await resp.json();
+            modelLayers = computeModelLayers(graphData.nodes, graphData.edges);
             renderSidebar();
             layoutGraph();
             renderGraph();
@@ -90,7 +145,7 @@
         // Group nodes by layer
         const layers = {};
         graphData.nodes.forEach(node => {
-            const layer = MODEL_LAYERS[node.id] !== undefined ? MODEL_LAYERS[node.id] : 0;
+            const layer = modelLayers[node.id] !== undefined ? modelLayers[node.id] : 0;
             if (!layers[layer]) layers[layer] = [];
             layers[layer].push(node);
         });
@@ -663,9 +718,20 @@
     }
 
     function focusMart() {
-        // Select the mart model and center view on it
-        selectModel('mart_customer_ltv_segments');
-        const pos = nodePositions['mart_customer_ltv_segments'];
+        // Select the first node from the highest layer and center view on it
+        if (!graphData || graphData.nodes.length === 0) return;
+        let maxLayer = -1;
+        let focusNodeId = null;
+        graphData.nodes.forEach(node => {
+            const layer = modelLayers[node.id] !== undefined ? modelLayers[node.id] : 0;
+            if (layer > maxLayer) {
+                maxLayer = layer;
+                focusNodeId = node.id;
+            }
+        });
+        if (!focusNodeId) return;
+        selectModel(focusNodeId);
+        const pos = nodePositions[focusNodeId];
         if (pos) {
             const svg = document.getElementById('lineage-graph');
             const rect = svg.getBoundingClientRect();
