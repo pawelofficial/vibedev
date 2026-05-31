@@ -536,16 +536,93 @@
         updateSelectionLabel(`Model: ${modelId}`);
     }
 
+    function collectColumnLineage(modelId, columnName) {
+        const upstreamEdges = [];
+        const downstreamEdges = [];
+        const upstreamColumns = [];
+        const downstreamColumns = [];
+        const upstreamEdgeKeys = new Set();
+        const downstreamEdgeKeys = new Set();
+        const upstreamColumnKeys = new Set();
+        const downstreamColumnKeys = new Set();
+
+        const columnKey = (model, column) => `${model}|${column}`;
+        const edgeKey = (edge) => `${edge.source_model}|${edge.source_column}|${edge.target_model}|${edge.target_column}`;
+        const selectedKey = columnKey(modelId, columnName);
+        const addColumn = (columns, keys, model, column) => {
+            const key = columnKey(model, column);
+            if (key === selectedKey || keys.has(key)) return;
+            keys.add(key);
+            columns.push({ model, column });
+        };
+
+        // BFS upstream through every direct dependency, then each dependency's dependencies.
+        const upQueue = [{ model: modelId, column: columnName }];
+        const upVisited = new Set([selectedKey]);
+        while (upQueue.length > 0) {
+            const cur = upQueue.shift();
+            graphData.edges.forEach(e => {
+                if (e.target_model === cur.model && e.target_column === cur.column) {
+                    const key = edgeKey(e);
+                    if (!upstreamEdgeKeys.has(key)) {
+                        upstreamEdgeKeys.add(key);
+                        upstreamEdges.push(e);
+                    }
+
+                    addColumn(upstreamColumns, upstreamColumnKeys, e.source_model, e.source_column);
+                    const sourceKey = columnKey(e.source_model, e.source_column);
+                    if (!upVisited.has(sourceKey)) {
+                        upVisited.add(sourceKey);
+                        upQueue.push({ model: e.source_model, column: e.source_column });
+                    }
+                }
+            });
+        }
+
+        // BFS downstream through every direct consumer, then each consumer's consumers.
+        const downQueue = [{ model: modelId, column: columnName }];
+        const downVisited = new Set([selectedKey]);
+        while (downQueue.length > 0) {
+            const cur = downQueue.shift();
+            graphData.edges.forEach(e => {
+                if (e.source_model === cur.model && e.source_column === cur.column) {
+                    const key = edgeKey(e);
+                    if (!downstreamEdgeKeys.has(key)) {
+                        downstreamEdgeKeys.add(key);
+                        downstreamEdges.push(e);
+                    }
+
+                    addColumn(downstreamColumns, downstreamColumnKeys, e.target_model, e.target_column);
+                    const targetKey = columnKey(e.target_model, e.target_column);
+                    if (!downVisited.has(targetKey)) {
+                        downVisited.add(targetKey);
+                        downQueue.push({ model: e.target_model, column: e.target_column });
+                    }
+                }
+            });
+        }
+
+        return {
+            upstreamEdges,
+            downstreamEdges,
+            upstreamColumns,
+            downstreamColumns,
+            upstreamEdgeKeys,
+            downstreamEdgeKeys,
+            upstreamColumnKeys,
+            downstreamColumnKeys,
+        };
+    }
+
     function selectColumn(modelId, columnName) {
         selectedModel = modelId;
         selectedColumn = columnName;
 
         const node = graphData.nodes.find(n => n.id === modelId);
         const col = node?.columns.find(c => c.name === columnName);
-
-        // Get upstream and downstream
-        const upstreamEdges = graphData.edges.filter(e => e.target_model === modelId && e.target_column === columnName);
-        const downstreamEdges = graphData.edges.filter(e => e.source_model === modelId && e.source_column === columnName);
+        const lineage = collectColumnLineage(modelId, columnName);
+        const upstreamColumns = lineage.upstreamColumns;
+        const downstreamColumns = lineage.downstreamColumns;
 
         const detail = document.getElementById('detail-content');
         detail.innerHTML = `
@@ -556,20 +633,20 @@
             </div>
             ${col?.expression ? `<div class="expression-display">${escapeHtml(col.expression)}</div>` : ''}
             <div class="lineage-direction">
-                <h4>⬆ Upstream (${upstreamEdges.length})</h4>
-                ${upstreamEdges.length === 0 ? '<div style="color:#666;font-size:12px;padding:4px 8px">Base column (no upstream)</div>' : ''}
-                ${upstreamEdges.map(e => `
-                    <div class="lineage-item" onclick="window.__selectColumn('${e.source_model}', '${e.source_column}')">
-                        <span class="lm">${e.source_model}</span>.<span class="lc">${e.source_column}</span>
+                <h4>⬆ Upstream (${upstreamColumns.length})</h4>
+                ${upstreamColumns.length === 0 ? '<div style="color:#666;font-size:12px;padding:4px 8px">Base column (no upstream)</div>' : ''}
+                ${upstreamColumns.map(c => `
+                    <div class="lineage-item" onclick="window.__selectColumn('${c.model}', '${c.column}')">
+                        <span class="lm">${c.model}</span>.<span class="lc">${c.column}</span>
                     </div>
                 `).join('')}
             </div>
             <div class="lineage-direction">
-                <h4>⬇ Downstream (${downstreamEdges.length})</h4>
-                ${downstreamEdges.length === 0 ? '<div style="color:#666;font-size:12px;padding:4px 8px">Terminal column (no downstream)</div>' : ''}
-                ${downstreamEdges.map(e => `
-                    <div class="lineage-item" onclick="window.__selectColumn('${e.target_model}', '${e.target_column}')">
-                        <span class="lm">${e.target_model}</span>.<span class="lc">${e.target_column}</span>
+                <h4>⬇ Downstream (${downstreamColumns.length})</h4>
+                ${downstreamColumns.length === 0 ? '<div style="color:#666;font-size:12px;padding:4px 8px">Terminal column (no downstream)</div>' : ''}
+                ${downstreamColumns.map(c => `
+                    <div class="lineage-item" onclick="window.__selectColumn('${c.model}', '${c.column}')">
+                        <span class="lm">${c.model}</span>.<span class="lc">${c.column}</span>
                     </div>
                 `).join('')}
             </div>
@@ -601,51 +678,15 @@
     }
 
     function highlightColumnEdges(modelId, columnName) {
-        // Collect all upstream and downstream via BFS
-        const upstreamSet = new Set();
-        const downstreamSet = new Set();
-
-        // BFS upstream
-        const upQueue = [{model: modelId, column: columnName}];
-        const upVisited = new Set([`${modelId}.${columnName}`]);
-        while (upQueue.length > 0) {
-            const cur = upQueue.shift();
-            graphData.edges.forEach(e => {
-                if (e.target_model === cur.model && e.target_column === cur.column) {
-                    const key = `${e.source_model}.${e.source_column}`;
-                    upstreamSet.add(`${e.source_model}|${e.source_column}|${e.target_model}|${e.target_column}`);
-                    if (!upVisited.has(key)) {
-                        upVisited.add(key);
-                        upQueue.push({model: e.source_model, column: e.source_column});
-                    }
-                }
-            });
-        }
-
-        // BFS downstream
-        const downQueue = [{model: modelId, column: columnName}];
-        const downVisited = new Set([`${modelId}.${columnName}`]);
-        while (downQueue.length > 0) {
-            const cur = downQueue.shift();
-            graphData.edges.forEach(e => {
-                if (e.source_model === cur.model && e.source_column === cur.column) {
-                    const key = `${e.target_model}.${e.target_column}`;
-                    downstreamSet.add(`${e.source_model}|${e.source_column}|${e.target_model}|${e.target_column}`);
-                    if (!downVisited.has(key)) {
-                        downVisited.add(key);
-                        downQueue.push({model: e.target_model, column: e.target_column});
-                    }
-                }
-            });
-        }
+        const lineage = collectColumnLineage(modelId, columnName);
 
         // Apply styles
         document.querySelectorAll('.lineage-edge').forEach(edge => {
             edge.classList.remove('highlighted', 'upstream', 'downstream');
             const edgeKey = `${edge.dataset.sourceModel}|${edge.dataset.sourceColumn}|${edge.dataset.targetModel}|${edge.dataset.targetColumn}`;
-            if (upstreamSet.has(edgeKey)) {
+            if (lineage.upstreamEdgeKeys.has(edgeKey)) {
                 edge.classList.add('highlighted', 'upstream');
-            } else if (downstreamSet.has(edgeKey)) {
+            } else if (lineage.downstreamEdgeKeys.has(edgeKey)) {
                 edge.classList.add('highlighted', 'downstream');
             }
         });
@@ -653,12 +694,11 @@
         // Highlight column texts
         document.querySelectorAll('.column-text').forEach(el => {
             el.classList.remove('selected', 'highlighted');
-            const key = `${el.dataset.model}.${el.dataset.column}`;
             if (el.dataset.model === modelId && el.dataset.column === columnName) {
                 el.classList.add('selected');
-            } else if (upVisited.has(key)) {
+            } else if (lineage.upstreamColumnKeys.has(`${el.dataset.model}|${el.dataset.column}`)) {
                 el.classList.add('highlighted');
-            } else if (downVisited.has(key)) {
+            } else if (lineage.downstreamColumnKeys.has(`${el.dataset.model}|${el.dataset.column}`)) {
                 el.classList.add('highlighted');
             }
         });
