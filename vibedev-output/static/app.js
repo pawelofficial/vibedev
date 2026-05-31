@@ -129,8 +129,9 @@
             const div = document.createElement('div');
             div.className = 'model-item';
             div.dataset.model = node.id;
+            const typeIcon = node.type === 'table' ? 'T' : node.type === 'missing' ? '?' : 'V';
             div.innerHTML = `
-                <span class="model-type-icon ${node.type}">${node.type === 'table' ? 'T' : 'V'}</span>
+                <span class="model-type-icon ${node.type}">${typeIcon}</span>
                 <span>${node.id}</span>
             `;
             div.addEventListener('click', () => selectModel(node.id));
@@ -470,6 +471,20 @@
         }
     }
 
+    /**
+     * Highlight a node in the SVG graph by adding the 'selected' class.
+     * Removes 'selected' from all other .model-node groups first.
+     */
+    function highlightNodeInGraph(modelId) {
+        document.querySelectorAll('.model-node').forEach(el => {
+            el.classList.remove('selected');
+        });
+        const target = document.querySelector(`.model-node[data-model="${modelId}"]`);
+        if (target) {
+            target.classList.add('selected');
+        }
+    }
+
     function selectModel(modelId) {
         selectedModel = modelId;
         selectedColumn = null;
@@ -502,6 +517,8 @@
 
         // Highlight edges connected to this model
         highlightModelEdges(modelId);
+        // Highlight the node in the SVG graph
+        highlightNodeInGraph(modelId);
         updateSelectionLabel(`Model: ${modelId}`);
     }
 
@@ -545,6 +562,8 @@
         `;
 
         highlightColumnEdges(modelId, columnName);
+        // Highlight the parent node in the SVG graph
+        highlightNodeInGraph(modelId);
         updateSelectionLabel(`${modelId}.${columnName}`);
     }
 
@@ -637,6 +656,12 @@
 
         input.addEventListener('input', () => {
             const query = input.value.toLowerCase().trim();
+
+            // Clear all search-match highlights first
+            document.querySelectorAll('.model-node').forEach(el => {
+                el.classList.remove('search-match');
+            });
+
             if (!query) {
                 results.classList.add('hidden');
                 return;
@@ -658,6 +683,18 @@
                 results.classList.add('hidden');
                 return;
             }
+
+            // Apply search-match highlights to matching nodes in the SVG
+            const matchedModels = new Set();
+            matches.forEach(m => {
+                matchedModels.add(m.model);
+            });
+            matchedModels.forEach(modelId => {
+                const nodeEl = document.querySelector(`.model-node[data-model="${modelId}"]`);
+                if (nodeEl) {
+                    nodeEl.classList.add('search-match');
+                }
+            });
 
             results.innerHTML = matches.slice(0, 20).map(m => {
                 if (m.type === 'model') {
@@ -684,6 +721,10 @@
                     }
                     results.classList.add('hidden');
                     input.value = '';
+                    // Clear search-match highlights since selection replaces them
+                    document.querySelectorAll('.model-node').forEach(el => {
+                        el.classList.remove('search-match');
+                    });
                 });
             });
         });
@@ -692,6 +733,10 @@
         document.addEventListener('click', (e) => {
             if (!e.target.closest('.search-container')) {
                 results.classList.add('hidden');
+                // Clear search-match highlights when clicking outside search
+                document.querySelectorAll('.model-node').forEach(el => {
+                    el.classList.remove('search-match');
+                });
             }
         });
     }
@@ -713,6 +758,7 @@
         document.querySelectorAll('.lineage-edge').forEach(e => e.classList.remove('highlighted', 'upstream', 'downstream'));
         document.querySelectorAll('.column-text').forEach(e => e.classList.remove('selected', 'highlighted'));
         document.querySelectorAll('.model-item').forEach(e => e.classList.remove('selected'));
+        document.querySelectorAll('.model-node').forEach(e => e.classList.remove('selected', 'search-match'));
         document.getElementById('detail-content').innerHTML = '<p class="hint">Click a model or column to inspect lineage</p>';
         updateSelectionLabel('');
     }

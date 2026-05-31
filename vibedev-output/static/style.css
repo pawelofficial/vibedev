@@ -171,6 +171,11 @@ aside#sidebar {
     color: #fff;
 }
 
+.model-type-icon.missing {
+    background: #d32f2f;
+    color: #fff;
+}
+
 #detail-content {
     font-size: 13px;
 }
@@ -322,6 +327,11 @@ body.node-dragging .model-node .column-text {
     stroke: #1565c0;
 }
 
+.model-node.missing rect {
+    fill: #2a1010;
+    stroke: #d32f2f;
+}
+
 .model-node .model-title {
     font-size: 13px;
     font-weight: 600;
@@ -350,6 +360,19 @@ body.node-dragging .model-node .column-text {
 .model-node .column-text.selected {
     fill: #4fc3f7;
     font-weight: bold;
+}
+
+.model-node.search-match rect {
+    stroke: #ffeb3b;
+    stroke-width: 3;
+    stroke-dasharray: 6 3;
+    filter: drop-shadow(0 0 6px rgba(255, 235, 59, 0.4));
+}
+
+.model-node.selected rect {
+    stroke: #4fc3f7;
+    stroke-width: 4;
+    filter: drop-shadow(0 0 8px rgba(79, 195, 247, 0.6));
 }
 
 .lineage-edge {

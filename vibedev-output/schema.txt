@@ -12,9 +12,9 @@ DROP TABLE IF EXISTS raw_order_items;
 DROP TABLE IF EXISTS raw_orders;
 DROP TABLE IF EXISTS raw_products;
 DROP TABLE IF EXISTS raw_customers;
-
+DROP TABLE nosuchtable;
 create table nosuchtable ( 
-    revenue_month varchar,
+    revenue_month date,
     id int
 );
 
@@ -653,7 +653,7 @@ SELECT
         WHEN sr.avg_health_score >= 750
             AND sr.at_risk_customer_count::NUMERIC / NULLIF(sr.customer_count, 0) < 0.10
             THEN 'invest'
-        WHEN sr.segment_margin_rate < 0
+        WHEN sr.segment_total_margin_amount / NULLIF(sr.segment_total_revenue_amount, 0) < 0
             OR sr.at_risk_customer_count::NUMERIC / NULLIF(sr.customer_count, 0) >= 0.30
             THEN 'intervene'
         WHEN sr.segment_revenue_30d_amount = 0 THEN 'watch'

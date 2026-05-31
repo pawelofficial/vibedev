@@ -137,6 +137,16 @@ Implement this feature:
     the sql in schema.txt may contain references to tables or views that do not have a corresponding ddl - lets call those objects missing tables. Make sure that the visualization handles those scnearios and when a sql query references something such missing table, this relationship still displays in the ui. The missing tables can have red color 
 """
 
+FEATURE_PROMPT="""Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
+    implement this feature:
+        - when user searches for a table in ui on the panel on the left or in the search box or when they click a particular table then it should highlight somehow - there can be a border of some sort appearing around it. 
+"""
+
+FEATURE_PROMPT="""Continue the existing lineage app in this workspace. Do not rebuild it from scratch.
+    
+"""
+
+
 USER_PROMPT=FEATURE_PROMPT
 
 workspace = vibedev.prompt(

@@ -497,8 +497,8 @@ def _resolve_upstream_through_ctes(
                         if fallback_col:
                             result.append((src_table, fallback_col))
         else:
-            # Unknown model - drop (it's likely a CTE that wasn't tracked)
-            pass
+            # Unknown model - keep as-is (could be a missing/external table)
+            result.append((model_name, col_name))
 
     # De-duplicate while preserving order
     seen = set()
@@ -1214,5 +1214,32 @@ def get_lineage_graph(models: Dict[str, Model]) -> dict:
                     'target_model': model_name,
                     'target_column': col,
                 })
+
+    # Detect missing tables: source models referenced in edges but not in models dict
+    known_models = set(models.keys())
+    missing_models = {}  # name -> set of column names
+    for edge in edges:
+        src = edge['source_model']
+        if src not in known_models:
+            if src not in missing_models:
+                missing_models[src] = set()
+            missing_models[src].add(edge['source_column'])
+
+    # Create nodes for missing tables
+    for model_name, columns in missing_models.items():
+        sorted_cols = sorted(columns)
+        columns_data = []
+        for col in sorted_cols:
+            columns_data.append({
+                'name': col,
+                'is_derived': False,
+                'expression': col,
+                'upstream_count': 0,
+            })
+        nodes.append({
+            'id': model_name,
+            'type': 'missing',
+            'columns': columns_data,
+        })
 
     return {'nodes': nodes, 'edges': edges}
