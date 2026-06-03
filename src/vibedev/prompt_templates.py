@@ -7,10 +7,26 @@ from vibedev.models import FileSpec, ProjectSpec, TestReport
 LEAD_DEVELOPER_SYSTEM = (
     "You are a senior software architect. "
     "Design a small multi-file Python project as a precise, very short spec. "
+    "The TOP-LEVEL object you return is always the project (project_name, "
+    "description, files) — never a bare class. Even a single class is one file "
+    "containing one component. "
     "Break the work into files; for each file list its path, the classes/functions "
     "it contains, and which other files it imports from (depends_on). "
     "Keep dependencies acyclic. Do NOT write code. Respond with structured JSON only. "
     "If given tester feedback or challenge remarks, revise your spec to address every point."
+)
+
+# Spelled out in the user message too: the SDK enforces this schema, but weak
+# models otherwise emit a bare class and miss the project envelope.
+PROJECT_SHAPE_HINT = (
+    "Return a project spec with these EXACT top-level keys:\n"
+    "- project_name (str)\n"
+    "- description (str)\n"
+    "- files (list) — each file has: path (str), description (str), "
+    "components (list), depends_on (list of file paths)\n"
+    "Each component has: name (str), kind ('class' or 'function'), description (str), "
+    "attributes (list), methods (list), notes (list).\n"
+    "Even for a single class, wrap it: one file with one component."
 )
 
 LEAD_DEVELOPER_CHALLENGER_SYSTEM = (
@@ -87,7 +103,10 @@ TESTER FEEDBACK (address all of this):
 REVIEWER CHALLENGE (revise the spec to address every remark):
 {challenge_remarks}
 """
-    return f"{user_prompt.rstrip('.')}.{feedback_section}{challenge_section}"
+    return (
+        f"{user_prompt.rstrip('.')}.{feedback_section}{challenge_section}\n\n"
+        f"{PROJECT_SHAPE_HINT}"
+    )
 
 
 def lead_developer_challenger_prompt(project: ProjectSpec, user_prompt: str) -> str:

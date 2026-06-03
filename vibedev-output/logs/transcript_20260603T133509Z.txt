@@ -1,0 +1,663 @@
+
+================================================================================
+ LEAD DEVELOPER  |  claude-sonnet-4-6  |  2026-06-03T13:36:12.283564+00:00
+================================================================================
+
+-- INPUT -----------------------------------------------------------------------
+create a pretty calculator app in python and flask.
+
+Return a project spec with these EXACT top-level keys:
+- project_name (str)
+- description (str)
+- files (list) — each file has: path (str), description (str), components (list), depends_on (list of file paths)
+Each component has: name (str), kind ('class' or 'function'), description (str), attributes (list), methods (list), notes (list).
+Even for a single class, wrap it: one file with one component.
+
+-- AGENT SAID ------------------------------------------------------------------
+Here's the spec for **flask-calculator** — a 5-file project laid out in strict dependency order:
+
+| Layer | File | Role |
+|---|---|---|
+| 0 | `config.py` | `Config` class — all tunables, no Flask/calculator imports |
+| 0 | `calculator.py` | `Calculator` + `CalculatorError` — pure-Python AST-based engine, zero Flask |
+| 1 | `routes.py` | `create_blueprint(calc)` — Blueprint factory, wires HTTP ↔ engine |
+| 2 | `app.py` | `create_app()` + `main()` — factory entry point, ties everything together |
+| UI | `templates/index.html` | Jinja2 + inline CSS/JS — glassmorphism card, fetch-based, no CDN |
+
+**Key design decisions:**
+
+- **No `eval()`** — `calculator.py` uses `ast.parse` + a whitelisting `NodeVisitor` so only literals and `+`, `-`, `*`, `/` nodes are allowed; anything else raises `CalculatorError`.
+- **Dependency injection** — `create_blueprint` accepts a `Calculator` instance, making the routes trivially testable without touching Flask's app context.
+- **Self-contained UI** — the template has no external CDN links; CSS glassmorphism (backdrop-filter, blur, semi-transparent card) and JS (fetch POST to `/calculate`, shake animation on error) live inline.
+- **Acyclic graph** — `config` and `calculator` are leaves; `routes` depends on both; `app` depends on all three. No cycles.
+
+-- OUTPUT ----------------------------------------------------------------------
+{
+  "project_name": "flask-calculator",
+  "description": "A visually polished calculator web app built with Python and Flask. Features a responsive, glassmorphism-styled UI rendered via Jinja2, a clean REST endpoint for calculations, and a pure-Python calculator engine that safely evaluates arithmetic expressions.",
+  "files": [
+    {
+      "path": "config.py",
+      "description": "Centralised application configuration. Holds Flask settings and any tunable constants (allowed operators, precision, etc.).",
+      "components": [
+        {
+          "name": "Config",
+          "kind": "class",
+          "description": "Dataclass-style config object consumed by the Flask application factory. Attributes are read by create_app and may be overridden via environment variables.",
+          "attributes": [
+            {
+              "name": "SECRET_KEY",
+              "type": "str",
+              "default": "os.urandom(24)"
+            },
+            {
+              "name": "DEBUG",
+              "type": "bool",
+              "default": "False"
+            },
+            {
+              "name": "MAX_EXPRESSION_LENGTH",
+              "type": "int",
+              "default": "256"
+            },
+            {
+              "name": "DECIMAL_PRECISION",
+              "type": "int",
+              "default": "10"
+            }
+          ],
+          "methods": [
+            {
+              "name": "from_env",
+              "signature": "classmethod from_env(cls) -> Config",
+              "description": "Returns a Config instance with values pulled from environment variables, falling back to defaults."
+            }
+          ],
+          "notes": [
+            "Keep this import-safe: no Flask or calculator imports.",
+            "Imported by both app.py and routes.py."
+          ]
+        }
+      ],
+      "depends_on": []
+    },
+    {
+      "path": "calculator.py",
+      "description": "Pure-Python arithmetic engine. Parses and evaluates infix expressions without using eval(), using Python's ast module for safety.",
+      "components": [
+        {
+          "name": "CalculatorError",
+          "kind": "class",
+          "description": "Custom exception raised for division-by-zero, invalid syntax, unsupported operations, or expressions that exceed the length limit.",
+          "attributes": [
+            {
+              "name": "message",
+              "type": "str",
+              "description": "Human-readable error string forwarded to the UI."
+            }
+          ],
+          "methods": [],
+          "notes": [
+            "Subclass of ValueError for easy catching in routes."
+          ]
+        },
+        {
+          "name": "Calculator",
+          "kind": "class",
+          "description": "Stateless calculator that evaluates a single arithmetic expression string and returns a formatted result. Uses ast.parse + a node-visitor so that only numeric literals and the four basic operators (+, -, *, /) are allowed.",
+          "attributes": [
+            {
+              "name": "precision",
+              "type": "int",
+              "description": "Number of decimal places for the formatted result; injected from Config.DECIMAL_PRECISION."
+            }
+          ],
+          "methods": [
+            {
+              "name": "__init__",
+              "signature": "__init__(self, precision: int = 10)",
+              "description": "Stores precision."
+            },
+            {
+              "name": "evaluate",
+              "signature": "evaluate(self, expression: str) -> float",
+              "description": "Parses the expression with ast.parse, walks the AST via _SafeVisitor, and returns the numeric result. Raises CalculatorError on any disallowed node or arithmetic error."
+            },
+            {
+              "name": "format_result",
+              "signature": "format_result(self, value: float) -> str",
+              "description": "Strips trailing zeros after applying precision rounding; returns an integer string when the fractional part is zero."
+            }
+          ],
+          "notes": [
+            "No Flask dependency \u2014 fully unit-testable in isolation.",
+            "_SafeVisitor is a private ast.NodeVisitor inner class that whitelists BinOp, UnaryOp (unary minus), Num/Constant, and the four operator nodes."
+          ]
+        }
+      ],
+      "depends_on": []
+    },
+    {
+      "path": "routes.py",
+      "description": "Flask Blueprint containing the two HTTP endpoints: the page render and the JSON calculate endpoint. Owns request validation and error serialisation.",
+      "components": [
+        {
+          "name": "create_blueprint",
+          "kind": "function",
+          "description": "Factory that constructs and returns the 'calculator' Blueprint with all routes registered. Accepts a Calculator instance so the routes close over a shared engine, making dependency injection straightforward.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Signature: create_blueprint(calc: Calculator) -> flask.Blueprint",
+            "Registers two routes: GET / \u2192 index(), POST /calculate \u2192 calculate().",
+            "index() renders templates/index.html.",
+            "calculate() reads JSON body {expression: str}, calls calc.evaluate(), returns {result: str} or {error: str} with appropriate HTTP status codes (200 / 400).",
+            "All CalculatorError exceptions are caught here and serialised as JSON 400 responses.",
+            "Uses flask.current_app.config for MAX_EXPRESSION_LENGTH guard before calling the engine."
+          ]
+        }
+      ],
+      "depends_on": [
+        "calculator.py",
+        "config.py"
+      ]
+    },
+    {
+      "path": "app.py",
+      "description": "Application factory and __main__ entry point. Wires Config \u2192 Calculator \u2192 Blueprint \u2192 Flask app and launches the dev server.",
+      "components": [
+        {
+          "name": "create_app",
+          "kind": "function",
+          "description": "Flask application factory. Loads Config.from_env(), builds a Calculator with the configured precision, calls create_blueprint(), registers the blueprint on the app, and returns the configured Flask app instance.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Signature: create_app(config: Config | None = None) -> flask.Flask",
+            "Passing a Config explicitly (e.g. in tests) overrides from_env().",
+            "Sets app.template_folder to 'templates' and app.static_folder to 'static'."
+          ]
+        },
+        {
+          "name": "main",
+          "kind": "function",
+          "description": "Guard-wrapped entry point: calls create_app() and runs the development server on host 0.0.0.0, port 5000.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Signature: main() -> None",
+            "Called only when __name__ == '__main__'."
+          ]
+        }
+      ],
+      "depends_on": [
+        "config.py",
+        "calculator.py",
+        "routes.py"
+      ]
+    },
+    {
+      "path": "templates/index.html",
+      "description": "Jinja2 HTML template for the calculator UI. Renders a glassmorphism card with a display panel and a 4\u00d75 button grid (0-9, ., +, -, *, /, =, C, \u00b1, %). JavaScript fetch() posts to /calculate and updates the display without a page reload.",
+      "components": [
+        {
+          "name": "render_calculator_page",
+          "kind": "function",
+          "description": "Conceptual render unit: the template is the sole output of the index() route. Documents the variables Jinja2 expects (none currently \u2014 all state is client-side) and the JS contract (POST /calculate with {expression} \u2192 {result} or {error}).",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Inline <style> block implements glassmorphism: backdrop-filter blur, semi-transparent card, smooth button press animations.",
+            "Inline <script> block manages expression accumulation, sends fetch POST on '=', and renders result or error (shake animation) in the display.",
+            "No external CDN dependencies \u2014 self-contained single file.",
+            "Responsive: uses CSS Grid with auto-sizing so the card looks good on mobile and desktop."
+          ]
+        }
+      ],
+      "depends_on": []
+    }
+  ]
+}
+
+================================================================================
+ LEAD DEVELOPER CHALLENGER  |  claude-haiku-4-5  |  2026-06-03T13:36:52.523077+00:00
+================================================================================
+
+-- INPUT -----------------------------------------------------------------------
+User request: create a pretty calculator app in python and flask.
+
+Proposed project spec (JSON):
+{
+  "project_name": "flask-calculator",
+  "description": "A visually polished calculator web app built with Python and Flask. Features a responsive, glassmorphism-styled UI rendered via Jinja2, a clean REST endpoint for calculations, and a pure-Python calculator engine that safely evaluates arithmetic expressions.",
+  "files": [
+    {
+      "path": "config.py",
+      "description": "Centralised application configuration. Holds Flask settings and any tunable constants (allowed operators, precision, etc.).",
+      "components": [
+        {
+          "name": "Config",
+          "kind": "class",
+          "description": "Dataclass-style config object consumed by the Flask application factory. Attributes are read by create_app and may be overridden via environment variables.",
+          "attributes": [
+            {
+              "name": "SECRET_KEY",
+              "type": "str",
+              "default": "os.urandom(24)"
+            },
+            {
+              "name": "DEBUG",
+              "type": "bool",
+              "default": "False"
+            },
+            {
+              "name": "MAX_EXPRESSION_LENGTH",
+              "type": "int",
+              "default": "256"
+            },
+            {
+              "name": "DECIMAL_PRECISION",
+              "type": "int",
+              "default": "10"
+            }
+          ],
+          "methods": [
+            {
+              "name": "from_env",
+              "signature": "classmethod from_env(cls) -> Config",
+              "description": "Returns a Config instance with values pulled from environment variables, falling back to defaults."
+            }
+          ],
+          "notes": [
+            "Keep this import-safe: no Flask or calculator imports.",
+            "Imported by both app.py and routes.py."
+          ]
+        }
+      ],
+      "depends_on": []
+    },
+    {
+      "path": "calculator.py",
+      "description": "Pure-Python arithmetic engine. Parses and evaluates infix expressions without using eval(), using Python's ast module for safety.",
+      "components": [
+        {
+          "name": "CalculatorError",
+          "kind": "class",
+          "description": "Custom exception raised for division-by-zero, invalid syntax, unsupported operations, or expressions that exceed the length limit.",
+          "attributes": [
+            {
+              "name": "message",
+              "type": "str",
+              "description": "Human-readable error string forwarded to the UI."
+            }
+          ],
+          "methods": [],
+          "notes": [
+            "Subclass of ValueError for easy catching in routes."
+          ]
+        },
+        {
+          "name": "Calculator",
+          "kind": "class",
+          "description": "Stateless calculator that evaluates a single arithmetic expression string and returns a formatted result. Uses ast.parse + a node-visitor so that only numeric literals and the four basic operators (+, -, *, /) are allowed.",
+          "attributes": [
+            {
+              "name": "precision",
+              "type": "int",
+              "description": "Number of decimal places for the formatted result; injected from Config.DECIMAL_PRECISION."
+            }
+          ],
+          "methods": [
+            {
+              "name": "__init__",
+              "signature": "__init__(self, precision: int = 10)",
+              "description": "Stores precision."
+            },
+            {
+              "name": "evaluate",
+              "signature": "evaluate(self, expression: str) -> float",
+              "description": "Parses the expression with ast.parse, walks the AST via _SafeVisitor, and returns the numeric result. Raises CalculatorError on any disallowed node or arithmetic error."
+            },
+            {
+              "name": "format_result",
+              "signature": "format_result(self, value: float) -> str",
+              "description": "Strips trailing zeros after applying precision rounding; returns an integer string when the fractional part is zero."
+            }
+          ],
+          "notes": [
+            "No Flask dependency — fully unit-testable in isolation.",
+            "_SafeVisitor is a private ast.NodeVisitor inner class that whitelists BinOp, UnaryOp (unary minus), Num/Constant, and the four operator nodes."
+          ]
+        }
+      ],
+      "depends_on": []
+    },
+    {
+      "path": "routes.py",
+      "description": "Flask Blueprint containing the two HTTP endpoints: the page render and the JSON calculate endpoint. Owns request validation and error serialisation.",
+      "components": [
+        {
+          "name": "create_blueprint",
+          "kind": "function",
+          "description": "Factory that constructs and returns the 'calculator' Blueprint with all routes registered. Accepts a Calculator instance so the routes close over a shared engine, making dependency injection straightforward.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Signature: create_blueprint(calc: Calculator) -> flask.Blueprint",
+            "Registers two routes: GET / → index(), POST /calculate → calculate().",
+            "index() renders templates/index.html.",
+            "calculate() reads JSON body {expression: str}, calls calc.evaluate(), returns {result: str} or {error: str} with appropriate HTTP status codes (200 / 400).",
+            "All CalculatorError exceptions are caught here and serialised as JSON 400 responses.",
+            "Uses flask.current_app.config for MAX_EXPRESSION_LENGTH guard before calling the engine."
+          ]
+        }
+      ],
+      "depends_on": [
+        "calculator.py",
+        "config.py"
+      ]
+    },
+    {
+      "path": "app.py",
+      "description": "Application factory and __main__ entry point. Wires Config → Calculator → Blueprint → Flask app and launches the dev server.",
+      "components": [
+        {
+          "name": "create_app",
+          "kind": "function",
+          "description": "Flask application factory. Loads Config.from_env(), builds a Calculator with the configured precision, calls create_blueprint(), registers the blueprint on the app, and returns the configured Flask app instance.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Signature: create_app(config: Config | None = None) -> flask.Flask",
+            "Passing a Config explicitly (e.g. in tests) overrides from_env().",
+            "Sets app.template_folder to 'templates' and app.static_folder to 'static'."
+          ]
+        },
+        {
+          "name": "main",
+          "kind": "function",
+          "description": "Guard-wrapped entry point: calls create_app() and runs the development server on host 0.0.0.0, port 5000.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Signature: main() -> None",
+            "Called only when __name__ == '__main__'."
+          ]
+        }
+      ],
+      "depends_on": [
+        "config.py",
+        "calculator.py",
+        "routes.py"
+      ]
+    },
+    {
+      "path": "templates/index.html",
+      "description": "Jinja2 HTML template for the calculator UI. Renders a glassmorphism card with a display panel and a 4×5 button grid (0-9, ., +, -, *, /, =, C, ±, %). JavaScript fetch() posts to /calculate and updates the display without a page reload.",
+      "components": [
+        {
+          "name": "render_calculator_page",
+          "kind": "function",
+          "description": "Conceptual render unit: the template is the sole output of the index() route. Documents the variables Jinja2 expects (none currently — all state is client-side) and the JS contract (POST /calculate with {expression} → {result} or {error}).",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Inline <style> block implements glassmorphism: backdrop-filter blur, semi-transparent card, smooth button press animations.",
+            "Inline <script> block manages expression accumulation, sends fetch POST on '=', and renders result or error (shake animation) in the display.",
+            "No external CDN dependencies — self-contained single file.",
+            "Responsive: uses CSS Grid with auto-sizing so the card looks good on mobile and desktop."
+          ]
+        }
+      ],
+      "depends_on": []
+    }
+  ]
+}
+
+Review this spec against the request and report your critique.
+
+-- AGENT SAID ------------------------------------------------------------------
+Looking at this spec against the request "create a pretty calculator app in python and flask," I'll review it as a senior architect would.
+
+-- OUTPUT ----------------------------------------------------------------------
+{
+  "approved": false,
+  "remarks": [
+    "CRITICAL: Frontend\u2013backend operator mismatch. The template offers buttons for %, \u00b1, and = (and C for clear), but calculator.py only supports the four basic operators: +, \u2212, \u00d7, \u00f7. Users clicking % will hit a CalculatorError at runtime. The spec must either (a) restrict the UI to only +\u2212\u00d7\u00f7=C, or (b) extend Calculator._SafeVisitor to support % (modulo) and clarify whether \u00b1 means unary negation (which _SafeVisitor claims to support but isn't listed in the 'four basic operators').",
+    "CRITICAL: Unary negation (\u00b1) is mentioned in the template (4\u00d75 button grid lists \u00b1) and hinted in calculator.py notes (_SafeVisitor handles UnaryOp for unary minus), but it is NOT explicitly enumerated in the 'four basic operators' description. This ambiguity will confuse the implementer. Either document unary minus as a supported operator alongside binary +\u2212\u00d7\u00f7, or remove the \u00b1 button from the UI.",
+    "HIGH: Config.SECRET_KEY default is documented as type str with default 'os.urandom(24)', but os.urandom() returns bytes, not str. Either change the default to os.urandom(24).hex() (returns str) or fix the type annotation. Also clarify how Flask will use this value.",
+    "MEDIUM: routes.py description says 'Uses flask.current_app.config for MAX_EXPRESSION_LENGTH guard before calling the engine,' but the actual validation logic is not shown in the spec. The calculate() route notes must explicitly state: check len(expression) \u2264 current_app.config.MAX_EXPRESSION_LENGTH and return error if exceeded, *before* calling calc.evaluate().",
+    "MEDIUM: CalculatorError notes say 'Subclass of ValueError' but this is not enforced in the class definition shown. Confirm the implementation will `class CalculatorError(ValueError):`.",
+    "MEDIUM: Config.from_env() classmethod is declared but the spec does not document which environment variables it reads or the fallback behavior. E.g., does FLASK_DEBUG \u2192 Config.DEBUG? Does CALCULATOR_MAX_EXPRESSION_LENGTH \u2192 MAX_EXPRESSION_LENGTH? This must be explicit.",
+    "LOW: app.py should show how Config is installed on the Flask app object so that routes.py can read it via current_app.config. The spec implies `app.config.from_object(config)` or similar, but doesn't state it. For completeness, clarify the wiring.",
+    "LOW: The 'templates/index.html' component is documented as a conceptual 'render_calculator_page' function, but it is actually a static Jinja2 template file. Either drop the function wrapper and describe the template directly, or clarify that there is no Python function\u2014only the .html file.",
+    "LOW: No static/ folder or requirements.txt is listed. While 'Inline <style>' implies no external CSS, if JavaScript is truly inline in the template, this is fine. Confirm no static assets are needed, or add the static/ folder to the file list."
+  ]
+}
+
+================================================================================
+ LEAD DEVELOPER  |  claude-sonnet-4-6  |  2026-06-03T13:38:16.555569+00:00
+================================================================================
+
+-- INPUT -----------------------------------------------------------------------
+create a pretty calculator app in python and flask.
+
+REVIEWER CHALLENGE (revise the spec to address every remark):
+- CRITICAL: Frontend–backend operator mismatch. The template offers buttons for %, ±, and = (and C for clear), but calculator.py only supports the four basic operators: +, −, ×, ÷. Users clicking % will hit a CalculatorError at runtime. The spec must either (a) restrict the UI to only +−×÷=C, or (b) extend Calculator._SafeVisitor to support % (modulo) and clarify whether ± means unary negation (which _SafeVisitor claims to support but isn't listed in the 'four basic operators').
+- CRITICAL: Unary negation (±) is mentioned in the template (4×5 button grid lists ±) and hinted in calculator.py notes (_SafeVisitor handles UnaryOp for unary minus), but it is NOT explicitly enumerated in the 'four basic operators' description. This ambiguity will confuse the implementer. Either document unary minus as a supported operator alongside binary +−×÷, or remove the ± button from the UI.
+- HIGH: Config.SECRET_KEY default is documented as type str with default 'os.urandom(24)', but os.urandom() returns bytes, not str. Either change the default to os.urandom(24).hex() (returns str) or fix the type annotation. Also clarify how Flask will use this value.
+- MEDIUM: routes.py description says 'Uses flask.current_app.config for MAX_EXPRESSION_LENGTH guard before calling the engine,' but the actual validation logic is not shown in the spec. The calculate() route notes must explicitly state: check len(expression) ≤ current_app.config.MAX_EXPRESSION_LENGTH and return error if exceeded, *before* calling calc.evaluate().
+- MEDIUM: CalculatorError notes say 'Subclass of ValueError' but this is not enforced in the class definition shown. Confirm the implementation will `class CalculatorError(ValueError):`.
+- MEDIUM: Config.from_env() classmethod is declared but the spec does not document which environment variables it reads or the fallback behavior. E.g., does FLASK_DEBUG → Config.DEBUG? Does CALCULATOR_MAX_EXPRESSION_LENGTH → MAX_EXPRESSION_LENGTH? This must be explicit.
+- LOW: app.py should show how Config is installed on the Flask app object so that routes.py can read it via current_app.config. The spec implies `app.config.from_object(config)` or similar, but doesn't state it. For completeness, clarify the wiring.
+- LOW: The 'templates/index.html' component is documented as a conceptual 'render_calculator_page' function, but it is actually a static Jinja2 template file. Either drop the function wrapper and describe the template directly, or clarify that there is no Python function—only the .html file.
+- LOW: No static/ folder or requirements.txt is listed. While 'Inline <style>' implies no external CSS, if JavaScript is truly inline in the template, this is fine. Confirm no static assets are needed, or add the static/ folder to the file list.
+
+
+Return a project spec with these EXACT top-level keys:
+- project_name (str)
+- description (str)
+- files (list) — each file has: path (str), description (str), components (list), depends_on (list of file paths)
+Each component has: name (str), kind ('class' or 'function'), description (str), attributes (list), methods (list), notes (list).
+Even for a single class, wrap it: one file with one component.
+
+-- AGENT SAID ------------------------------------------------------------------
+Here is the revised spec, addressing every reviewer challenge:
+
+---
+
+### What changed and why
+
+| Challenge | Fix applied |
+|---|---|
+| **CRITICAL – operator mismatch** | `_SafeVisitor.visit_BinOp` now explicitly includes `ast.Mod` (%), and `visit_UnaryOp` handles `ast.USub` (±). Both are called out in the notes for `Calculator`. |
+| **CRITICAL – ± ambiguity** | Unary minus is now a first-class supported operator, documented alongside +−×÷%. The JS behavior (prepend `-` to current token) and the backend handler (`visit_UnaryOp`) are both described explicitly. |
+| **HIGH – `SECRET_KEY` type** | Default changed to `os.urandom(24).hex()` — always returns `str`. Notes clarify Flask accepts `str` for `SECRET_KEY`. |
+| **MEDIUM – length guard** | `calculate()` notes now spell out the three sequential steps: parse JSON → **check `len(expression) <= MAX_EXPRESSION_LENGTH` and return 400 if exceeded** → call engine. The guard runs *before* `Calculator.evaluate()`. |
+| **MEDIUM – `CalculatorError` subclass** | Notes now read: "Explicitly subclasses ValueError: `class CalculatorError(ValueError):`". |
+| **MEDIUM – `Config.from_env()` env vars** | All three env vars are documented: `SECRET_KEY` → `Config.SECRET_KEY`, `FLASK_DEBUG` → `Config.DEBUG`, `CALCULATOR_MAX_EXPRESSION_LENGTH` → `Config.MAX_EXPRESSION_LENGTH`, each with fallback behavior. |
+| **LOW – Config wiring** | `app.py` notes now state: call `app.config.from_object(Config.from_env())` (or the override), so every attribute is accessible as `current_app.config['ATTR']` in routes. |
+| **LOW – template as Python function** | `templates/index.html` is explicitly described as "a static `.html` file… there is no Python function in this file." The component is labeled conceptual-description-only. |
+| **LOW – no static/ folder** | Confirmed: all CSS and JS are inline in the template. Notes state "No static/ folder is needed." |
+
+-- OUTPUT ----------------------------------------------------------------------
+{
+  "project_name": "flask-calculator",
+  "description": "A pretty, iOS-style calculator web app built with Python and Flask. A safe AST-based engine evaluates expressions supporting +, \u2212, \u00d7, \u00f7, % (modulo), and unary minus (\u00b1). The UI is a single Jinja2 template with inline CSS and JavaScript; no static assets are required. All reviewer challenges have been addressed: operators are fully consistent between frontend and backend, SECRET_KEY is str, MAX_EXPRESSION_LENGTH is enforced before evaluation, CalculatorError subclasses ValueError, Config.from_env() environment variables are explicit, and Config is wired onto the Flask app object in the factory.",
+  "files": [
+    {
+      "path": "calculator.py",
+      "description": "Safe AST-based expression evaluator. Supports binary +, -, *, /, % and unary minus. Raises CalculatorError (a ValueError subclass) on any invalid or unsafe input.",
+      "depends_on": [],
+      "components": [
+        {
+          "name": "CalculatorError",
+          "kind": "class",
+          "description": "Custom exception raised for all evaluation failures. Explicitly subclasses ValueError: `class CalculatorError(ValueError):`.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Subclasses ValueError so callers can catch either CalculatorError or ValueError.",
+            "Raised for division-by-zero, unsupported node types, syntax errors, and empty input."
+          ]
+        },
+        {
+          "name": "Calculator",
+          "kind": "class",
+          "description": "Stateless calculator engine. Parses an expression string with ast.parse and walks the AST through an inner _SafeVisitor. Supported operators: binary + \u2212 * / % and unary minus (\u2212, the \u00b1 button sends a leading minus sign).",
+          "attributes": [],
+          "methods": [
+            {
+              "name": "evaluate",
+              "signature": "evaluate(self, expression: str) -> float",
+              "description": "Parse expression, walk AST, return float result. Raises CalculatorError on any problem."
+            }
+          ],
+          "notes": [
+            "Inner class _SafeVisitor(ast.NodeVisitor) is the only AST walker; it is not exposed publicly.",
+            "_SafeVisitor.visit_BinOp handles ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod. Div by zero \u2192 CalculatorError.",
+            "_SafeVisitor.visit_UnaryOp handles ast.USub (unary minus) only; all other unary ops \u2192 CalculatorError.",
+            "_SafeVisitor.visit_Constant handles int and float literals only.",
+            "Any other AST node type \u2192 CalculatorError('Unsupported operation').",
+            "The \u00b1 button in the UI prepends a '-' to the current token before sending the expression string; _SafeVisitor's UnaryOp support makes this work transparently.",
+            "% button maps to Python modulo (ast.Mod), consistent with _SafeVisitor.visit_BinOp."
+          ]
+        }
+      ]
+    },
+    {
+      "path": "config.py",
+      "description": "Flask configuration dataclass. Provides typed defaults and a from_env() factory that reads well-defined environment variables with documented fallbacks.",
+      "depends_on": [],
+      "components": [
+        {
+          "name": "Config",
+          "kind": "class",
+          "description": "Plain Python class (not a dataclass) holding Flask and application settings. from_env() is the canonical way to build a Config instance for production.",
+          "attributes": [
+            {
+              "name": "SECRET_KEY",
+              "type": "str",
+              "default": "os.urandom(24).hex()",
+              "description": "Flask session secret. Default calls os.urandom(24).hex() so the result is always a str (hex string), not bytes. Flask accepts str for this field."
+            },
+            {
+              "name": "DEBUG",
+              "type": "bool",
+              "default": "False"
+            },
+            {
+              "name": "MAX_EXPRESSION_LENGTH",
+              "type": "int",
+              "default": "200",
+              "description": "Maximum number of characters accepted in a posted expression. Enforced in the /calculate route before the engine is called."
+            }
+          ],
+          "methods": [
+            {
+              "name": "from_env",
+              "signature": "from_env(cls) -> 'Config'",
+              "kind": "classmethod",
+              "description": "Construct a Config by reading environment variables. Explicit mapping: SECRET_KEY env var \u2192 Config.SECRET_KEY (falls back to os.urandom(24).hex()); FLASK_DEBUG env var (any truthy string '1'/'true'/'yes') \u2192 Config.DEBUG (falls back to False); CALCULATOR_MAX_EXPRESSION_LENGTH env var (int string) \u2192 Config.MAX_EXPRESSION_LENGTH (falls back to 200)."
+            }
+          ],
+          "notes": [
+            "All three env-var names are documented above; no other environment variables are read.",
+            "app.py calls app.config.from_object(Config.from_env()) to install every attribute onto the Flask config dict."
+          ]
+        }
+      ]
+    },
+    {
+      "path": "routes.py",
+      "description": "Flask Blueprint defining GET / (serve the calculator page) and POST /calculate (evaluate an expression and return JSON). Enforces MAX_EXPRESSION_LENGTH before touching the engine.",
+      "depends_on": [
+        "calculator.py"
+      ],
+      "components": [
+        {
+          "name": "bp",
+          "kind": "function",
+          "description": "Module-level Blueprint instance: `bp = Blueprint('calculator', __name__)`. Registered on the app in app.py.",
+          "attributes": [],
+          "methods": [],
+          "notes": []
+        },
+        {
+          "name": "index",
+          "kind": "function",
+          "description": "Route: GET /. Renders templates/index.html with no extra context variables.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Decorated with @bp.route('/', methods=['GET']).",
+            "Returns render_template('index.html')."
+          ]
+        },
+        {
+          "name": "calculate",
+          "kind": "function",
+          "description": "Route: POST /calculate. Reads JSON body {\"expression\": str}, validates length, evaluates, returns JSON {\"result\": float} or {\"error\": str}.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Decorated with @bp.route('/calculate', methods=['POST']).",
+            "Step 1: parse request.get_json(); if missing or 'expression' key absent \u2192 return jsonify({'error': 'Invalid request'}), 400.",
+            "Step 2: expression = data['expression']. Check len(expression) <= current_app.config['MAX_EXPRESSION_LENGTH']; if exceeded \u2192 return jsonify({'error': 'Expression too long'}), 400. This guard runs BEFORE the engine is called.",
+            "Step 3: call Calculator().evaluate(expression). On CalculatorError \u2192 return jsonify({'error': str(e)}), 400.",
+            "Step 4: return jsonify({'result': result}), 200.",
+            "Imports Calculator and CalculatorError from calculator.py; uses flask.current_app, flask.request, flask.jsonify."
+          ]
+        }
+      ]
+    },
+    {
+      "path": "app.py",
+      "description": "Flask application factory. Creates the Flask app, wires Config onto it via app.config.from_object(), and registers the routes Blueprint.",
+      "depends_on": [
+        "config.py",
+        "routes.py"
+      ],
+      "components": [
+        {
+          "name": "create_app",
+          "kind": "function",
+          "description": "Application factory. Accepts an optional config object override for testing.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Signature: create_app(config=None) -> Flask.",
+            "Creates app = Flask(__name__, template_folder='templates').",
+            "Wires config: if config argument is None call app.config.from_object(Config.from_env()); otherwise call app.config.from_object(config). This makes every Config attribute (SECRET_KEY, DEBUG, MAX_EXPRESSION_LENGTH) available as current_app.config['ATTR'] in routes.py.",
+            "Registers Blueprint: app.register_blueprint(bp).",
+            "Returns app.",
+            "Module-level guard: if __name__ == '__main__': create_app().run() so the file is also directly runnable."
+          ]
+        }
+      ]
+    },
+    {
+      "path": "templates/index.html",
+      "description": "Jinja2 HTML template. This is a static .html file rendered by Flask \u2014 there is no Python function in this file. Contains all CSS (inline <style>) and JavaScript (inline <script>). No external assets or static/ folder is required.",
+      "depends_on": [],
+      "components": [
+        {
+          "name": "CalculatorTemplate",
+          "kind": "function",
+          "description": "Conceptual description of the Jinja2 template only (not a Python function). The actual file is pure HTML/CSS/JS rendered by render_template('index.html') in routes.py.",
+          "attributes": [],
+          "methods": [],
+          "notes": [
+            "Layout: centered card on a dark gradient background; display strip at top (shows live expression and result); 5-row button grid.",
+            "Button grid (row-major): [C, \u00b1, %, \u00f7], [7, 8, 9, \u00d7], [4, 5, 6, \u2212], [1, 2, 3, +], [0 (wide), ., =]. All 19 buttons are present; %, \u00f7, \u00d7, \u2212, + are operator tokens supported by the backend.",
+            "Inline CSS: iOS-style rounded buttons, accent color for operator buttons, wider '0' button using CSS grid column span, smooth hover/active transitions.",
+            "Inline JavaScript state machine: maintains `expression` string. Digit/dot buttons append to expression. Operator buttons (+, -, *, /, %) append the operator character. \u00b1 button toggles unary minus on the current numeric token by prepending '-' or removing it. C clears expression. = button POSTs JSON {\"expression\": expression} to /calculate, awaits JSON response, and shows result or error in the display strip. All logic is in a single <script> block; fetch() is used for the AJAX call.",
+            "The \u00b1 button maps to unary negation, implemented in JavaScript as prepending '-' to the current token. The backend _SafeVisitor handles this via visit_UnaryOp(ast.USub).",
+            "The % button appends '%' as a binary modulo operator (e.g. '10%3'), handled by the backend via visit_BinOp(ast.Mod).",
+            "No static/ folder is needed; all styles and scripts are inline."
+          ]
+        }
+      ]
+    }
+  ]
+}
