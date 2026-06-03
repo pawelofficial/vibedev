@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 
 from vibedev import config
-from vibedev.utils.logging import ConversationLogger
+from vibedev.utils.logging import ConversationLogger, get_transcript
 
 
 async def run_agent(
@@ -24,6 +24,7 @@ async def run_agent(
 
     logger: ConversationLogger | None = None
     result_data: dict = {}
+    narration: list[str] = []
 
     print(f"\n{'='*50}")
     print(f"AGENT: {role}  [{config.CONFIG['model']}]")
@@ -40,6 +41,14 @@ async def run_agent(
             except Exception:
                 logger.log("message", type=type(message).__name__, data=str(message))
 
+        # Best-effort capture of any text the agent emits, for the transcript.
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            for block in content:
+                text = getattr(block, "text", None)
+                if text:
+                    narration.append(text)
+
         print(message)
 
         if isinstance(message, ResultMessage):
@@ -55,5 +64,15 @@ async def run_agent(
     if logger:
         logger.log("agent_end", role=role)
         logger.flush()
+
+    transcript = get_transcript()
+    if transcript:
+        transcript.agent(
+            role=role,
+            model=config.CONFIG["model"],
+            prompt=prompt,
+            output=result_data,
+            narration="\n".join(narration),
+        )
 
     return result_data
