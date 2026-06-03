@@ -11,6 +11,6 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 LOGS_DIR = OUTPUT_DIR / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
-MAX_ITERATIONS = 3
+MAX_ITERATIONS = 5
 
 LOG_LEVEL = "INFO"
