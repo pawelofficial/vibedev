@@ -6,7 +6,6 @@ build-backend = "hatchling.build"
 name = "vibedev"
 version = "0.1.0"
 description = "Agentic development as a Python package — give it a prompt, get a project."
-readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "vibedev" }]
 keywords = ["claude", "agent", "agentic", "codegen", "ai"]
@@ -21,6 +20,7 @@ classifiers = [
 dependencies = [
     "claude-agent-sdk>=0.1",
     "anyio>=4.0",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
