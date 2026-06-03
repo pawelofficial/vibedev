@@ -1,3 +1,3 @@
 import vibedev
 
-vibedev.run("Design a minimalisticDog class in Python.")
+vibedev.run("Design a minimalistic Dog class in Python.")

@@ -15,6 +15,8 @@ async def run_agent(
         model=config.CONFIG["model"],
         system_prompt=system_prompt,
         allowed_tools=config.CONFIG["allowed_tools"],
+        permission_mode=config.CONFIG["permission_mode"],
+        add_dirs=config.CONFIG["extra_dirs"],
         cwd=config.OUTPUT_DIR,
         output_format={
             "type": "json_schema",
