@@ -1,57 +1,69 @@
 import json
 import re
 
-from vibedev.models import DesignSpec, TestReport
+from vibedev.models import FileSpec, ProjectSpec, TestReport
 
 
 LEAD_DEVELOPER_SYSTEM = (
     "You are a senior software architect. "
-    "Output a precise, very short design spec for a Python class. "
-    "Do NOT write code. Respond with structured JSON only. "
+    "Design a small multi-file Python project as a precise, very short spec. "
+    "Break the work into files; for each file list its path, the classes/functions "
+    "it contains, and which other files it imports from (depends_on). "
+    "Keep dependencies acyclic. Do NOT write code. Respond with structured JSON only. "
     "If given tester feedback or challenge remarks, revise your spec to address every point."
 )
 
 LEAD_DEVELOPER_CHALLENGER_SYSTEM = (
-    "You are a senior architect reviewing another architect's design spec. "
-    "Critique it against the user's request: look for missing or unnecessary "
-    "Pay attention to high level architectural mistakes, ommissions, poor design choices "
-    "attributes/methods, vague descriptions, wrong types, and scope creep. "
+    "You are a senior architect reviewing another architect's multi-file project spec. "
+    "Critique it against the user's request: missing or unnecessary files/components, "
+    "high-level architectural mistakes, poor module boundaries, wrong types, scope creep, "
+    "and especially cross-file problems — circular or missing depends_on, an interface "
+    "declared in one file but used inconsistently in another. "
     "Be strict but fair — approve only when the spec is genuinely sound. "
     "Respond with structured JSON only: set 'approved' and list concrete 'remarks'."
 )
 
 DEVELOPER_SYSTEM = (
-    "You are a Python developer. "
-    "Implement exactly what the spec says, nothing more. "
-    "Always overwrite the target module file completely. "
+    "You are a Python developer implementing ONE file of a larger project. "
+    "Implement exactly what the file spec says, nothing more. "
+    "Read the files this one depends on so your imports and signatures match them. "
+    "Write a brand-new file in full; on a revision, make targeted edits and do not "
+    "regenerate code that is already correct. "
+    "Create parent directories as needed so nested paths are preserved. "
     "If given code-review remarks, revise the implementation to address every point."
 )
 
 DEVELOPER_CHALLENGER_SYSTEM = (
-    "You are a senior engineer doing code review. "
-    "Read the implementation file and critique it against the spec: missing or "
-    "incorrect attributes/methods, wrong signatures, bugs, and sloppy code. "
-    "Be strict but fair — approve only when the implementation faithfully and "
-    "cleanly satisfies the spec. "
+    "You are a senior engineer doing code review on a single file. "
+    "Read the implementation file and critique it against its spec: missing or "
+    "incorrect components, wrong signatures, bugs, broken imports of sibling files, "
+    "and sloppy code. "
+    "Be strict but fair — approve only when the file faithfully and cleanly satisfies "
+    "its spec. "
     "Respond with structured JSON only: set 'approved' and list concrete 'remarks'."
 )
 
 TESTER_SYSTEM = (
-    "You are a QA engineer. "
-    "Read the implementation file, write pytest tests for every attribute and method, "
-    "save to the test file, and run them with Bash. "
+    "You are a QA engineer testing a multi-file Python project. "
+    "Read the implementation files, write pytest tests covering every component "
+    "(class/function) across all files, save them, and run the whole suite with Bash. "
     "Report results as structured JSON."
 )
 
 
 def module_filename(class_name: str) -> str:
+    """Suggested snake_case module name for a CamelCase class (naming hint only;
+    the spec carries explicit file paths)."""
     s = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", class_name)
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s).lower()
     return f"{s}.py"
 
 
-def test_filename(class_name: str) -> str:
-    return f"test_{module_filename(class_name)}"
+def test_filename(path: str) -> str:
+    """Map a module path to a test path in the same directory: store/cart.py -> store/test_cart.py."""
+    parts = path.rsplit("/", 1)
+    head, name = (parts[0], parts[1]) if len(parts) == 2 else ("", parts[0])
+    return f"{head + '/' if head else ''}test_{name}"
 
 
 def lead_developer_prompt(
@@ -78,48 +90,53 @@ REVIEWER CHALLENGE (revise the spec to address every remark):
     return f"{user_prompt.rstrip('.')}.{feedback_section}{challenge_section}"
 
 
-def lead_developer_challenger_prompt(specs: DesignSpec, user_prompt: str) -> str:
-    spec_json = specs.model_dump_json(indent=2)
+def lead_developer_challenger_prompt(project: ProjectSpec, user_prompt: str) -> str:
+    spec_json = project.model_dump_json(indent=2)
     return (
         f"User request: {user_prompt.rstrip('.')}.\n\n"
-        f"Proposed design spec (JSON):\n{spec_json}\n\n"
+        f"Proposed project spec (JSON):\n{spec_json}\n\n"
         f"Review this spec against the request and report your critique."
     )
 
 
-def developer_prompt(specs: DesignSpec, challenge_remarks: str = "") -> str:
-    target = module_filename(specs.class_name)
-    spec_json = specs.model_dump_json(indent=2)
+def developer_prompt(file: FileSpec, project: ProjectSpec, challenge_remarks: str = "") -> str:
+    file_json = file.model_dump_json(indent=2)
+    deps = ", ".join(file.depends_on) if file.depends_on else "none"
+    all_paths = ", ".join(f.path for f in project.files)
     challenge_section = ""
     if challenge_remarks:
         challenge_section = f"""
 
-CODE REVIEW (revise {target} to address every remark):
+CODE REVIEW (revise {file.path} to address every remark):
 {challenge_remarks}
 """
     return (
-        f"Implement the {specs.class_name} class in {target}.\n\n"
-        f"Spec (JSON):\n{spec_json}{challenge_section}"
+        f"Project: {project.project_name} — {project.description}\n"
+        f"All files in the project: {all_paths}\n\n"
+        f"Implement the file {file.path}.\n"
+        f"It depends on (read these for matching imports/signatures): {deps}\n\n"
+        f"File spec (JSON):\n{file_json}{challenge_section}"
     )
 
 
-def developer_challenger_prompt(specs: DesignSpec) -> str:
-    target = module_filename(specs.class_name)
-    spec_json = specs.model_dump_json(indent=2)
+def developer_challenger_prompt(file: FileSpec) -> str:
+    file_json = file.model_dump_json(indent=2)
     return (
-        f"Read {target} and review its implementation against the spec.\n\n"
-        f"Spec (JSON):\n{spec_json}\n\n"
+        f"Read {file.path} and review its implementation against the spec.\n\n"
+        f"File spec (JSON):\n{file_json}\n\n"
         f"Report whether the implementation satisfies the spec, with concrete remarks."
     )
 
 
-def tester_prompt(specs: DesignSpec) -> str:
-    target = module_filename(specs.class_name)
-    tests = test_filename(specs.class_name)
-    expected_methods = [m["name"] for m in specs.methods]
+def tester_prompt(project: ProjectSpec) -> str:
+    lines = []
+    for f in project.files:
+        names = ", ".join(c.name for c in f.components) or "(no components)"
+        lines.append(f"- {f.path}: {names} -> tests in {test_filename(f.path)}")
+    files_block = "\n".join(lines)
     return (
-        f"Read {target}. Write and run pytest tests covering:\n"
-        f"- All attributes from spec\n"
-        f"- All methods: {', '.join(expected_methods)}\n"
-        f"Save tests to {tests} and run them."
+        f"Project: {project.project_name} — {project.description}\n\n"
+        f"Read these files and write pytest tests covering every component:\n"
+        f"{files_block}\n\n"
+        f"Run the whole test suite with pytest and report the results."
     )
