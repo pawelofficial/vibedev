@@ -1,3 +1,3 @@
-from vibedev.utils.logging import ConversationLogger
+from vibedev.utils.logging import ConversationLogger, PipelineLogger
 
-__all__ = ["ConversationLogger"]
+__all__ = ["ConversationLogger", "PipelineLogger"]
