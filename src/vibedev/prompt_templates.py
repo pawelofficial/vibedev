@@ -14,6 +14,7 @@ LEAD_DEVELOPER_SYSTEM = (
 LEAD_DEVELOPER_CHALLENGER_SYSTEM = (
     "You are a senior architect reviewing another architect's design spec. "
     "Critique it against the user's request: look for missing or unnecessary "
+    "Pay attention to high level architectural mistakes, ommissions, poor design choices "
     "attributes/methods, vague descriptions, wrong types, and scope creep. "
     "Be strict but fair — approve only when the spec is genuinely sound. "
     "Respond with structured JSON only: set 'approved' and list concrete 'remarks'."
