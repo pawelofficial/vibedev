@@ -1,0 +1,418 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\zdune\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+rootdir: C:\gh\vibedev
+configfile: pyproject.toml
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 268 items
+
+calculator\static\test_script_js.py::TestJSFileStructure::test_js_file_exists PASSED [  0%]
+calculator\static\test_script_js.py::TestJSFileStructure::test_js_file_is_readable PASSED [  0%]
+calculator\static\test_script_js.py::TestJSFileStructure::test_js_file_not_empty PASSED [  1%]
+calculator\static\test_script_js.py::TestJSFileStructure::test_use_strict_directive PASSED [  1%]
+calculator\static\test_script_js.py::TestCalculatorUIClass::test_class_definition PASSED [  1%]
+calculator\static\test_script_js.py::TestCalculatorUIClass::test_constructor_method PASSED [  2%]
+calculator\static\test_script_js.py::TestCalculatorUIClass::test_expression_property PASSED [  2%]
+calculator\static\test_script_js.py::TestCalculatorUIClass::test_display_property PASSED [  2%]
+calculator\static\test_script_js.py::TestCalculatorUIMethods::test_init_method PASSED [  3%]
+calculator\static\test_script_js.py::TestCalculatorUIMethods::test_handle_button_method PASSED [  3%]
+calculator\static\test_script_js.py::TestCalculatorUIMethods::test_send_expression_method PASSED [  4%]
+calculator\static\test_script_js.py::TestCalculatorUIMethods::test_update_display_method PASSED [  4%]
+calculator\static\test_script_js.py::TestCalculatorUIEventHandling::test_event_delegation_pattern PASSED [  4%]
+calculator\static\test_script_js.py::TestCalculatorUIEventHandling::test_click_event_handling PASSED [  5%]
+calculator\static\test_script_js.py::TestCalculatorUIEventHandling::test_closest_selector PASSED [  5%]
+calculator\static\test_script_js.py::TestCalculatorUIEventHandling::test_data_value_attribute_usage PASSED [  5%]
+calculator\static\test_script_js.py::TestCalculatorUIButtonHandling::test_clear_button_handling PASSED [  6%]
+calculator\static\test_script_js.py::TestCalculatorUIButtonHandling::test_equals_button_handling PASSED [  6%]
+calculator\static\test_script_js.py::TestCalculatorUIButtonHandling::test_backspace_button_handling PASSED [  7%]
+calculator\static\test_script_js.py::TestCalculatorUIButtonHandling::test_switch_statement PASSED [  7%]
+calculator\static\test_script_js.py::TestCalculatorUIFetchAPI::test_fetch_usage PASSED [  7%]
+calculator\static\test_script_js.py::TestCalculatorUIFetchAPI::test_calculate_endpoint PASSED [  8%]
+calculator\static\test_script_js.py::TestCalculatorUIFetchAPI::test_post_method PASSED [  8%]
+calculator\static\test_script_js.py::TestCalculatorUIFetchAPI::test_json_content_type PASSED [  8%]
+calculator\static\test_script_js.py::TestCalculatorUIFetchAPI::test_response_json_parsing PASSED [  9%]
+calculator\static\test_script_js.py::TestCalculatorUIFetchAPI::test_error_handling PASSED [  9%]
+calculator\static\test_script_js.py::TestCalculatorUIDisplayHandling::test_display_element_access PASSED [ 10%]
+calculator\static\test_script_js.py::TestCalculatorUIDisplayHandling::test_text_content_update PASSED [ 10%]
+calculator\static\test_script_js.py::TestCalculatorUIDisplayHandling::test_decimal_stripping_logic PASSED [ 10%]
+calculator\static\test_script_js.py::TestCalculatorUIDisplayHandling::test_regex_pattern_for_decimal PASSED [ 11%]
+calculator\static\test_script_js.py::TestCalculatorUIInitialization::test_dom_content_loaded_event PASSED [ 11%]
+calculator\static\test_script_js.py::TestCalculatorUIInitialization::test_instantiation_on_load PASSED [ 11%]
+calculator\static\test_script_js.py::TestCalculatorUIInitialization::test_init_call_on_load PASSED [ 12%]
+calculator\static\test_script_js.py::TestCalculatorUIErrorMessages::test_error_property_accessed PASSED [ 12%]
+calculator\static\test_script_js.py::TestCalculatorUIErrorMessages::test_error_display_timing PASSED [ 13%]
+calculator\static\test_script_js.py::TestCalculatorUIErrorMessages::test_error_dismissal PASSED [ 13%]
+calculator\static\test_script_js.py::TestCalculatorUIExpressionBuffer::test_expression_buffer_usage PASSED [ 13%]
+calculator\static\test_script_js.py::TestCalculatorUIExpressionBuffer::test_expression_appending PASSED [ 14%]
+calculator\static\test_script_js.py::TestCalculatorUIExpressionBuffer::test_expression_clearing PASSED [ 14%]
+calculator\static\test_script_js.py::TestCalculatorUIComments::test_jsdoc_comments PASSED [ 14%]
+calculator\static\test_script_js.py::TestCalculatorUIComments::test_parameter_documentation PASSED [ 15%]
+calculator\static\test_script_js.py::TestCalculatorUIComments::test_method_documentation PASSED [ 15%]
+calculator\static\test_script_js.py::TestCalculatorUIAsyncHandling::test_async_send_expression PASSED [ 16%]
+calculator\static\test_script_js.py::TestCalculatorUIAsyncHandling::test_await_fetch PASSED [ 16%]
+calculator\static\test_script_js.py::TestCalculatorUIAsyncHandling::test_await_response_json PASSED [ 16%]
+calculator\static\test_style_css.py::TestCSSFileStructure::test_css_file_exists PASSED [ 17%]
+calculator\static\test_style_css.py::TestCSSFileStructure::test_css_file_is_readable PASSED [ 17%]
+calculator\static\test_style_css.py::TestCSSFileStructure::test_css_file_not_empty PASSED [ 17%]
+calculator\static\test_style_css.py::TestCSSVariables::test_root_selector_exists PASSED [ 18%]
+calculator\static\test_style_css.py::TestCSSVariables::test_background_color_variable PASSED [ 18%]
+calculator\static\test_style_css.py::TestCSSVariables::test_text_color_variable PASSED [ 19%]
+calculator\static\test_style_css.py::TestCSSVariables::test_accent_color_variable PASSED [ 19%]
+calculator\static\test_style_css.py::TestCSSVariables::test_equals_color_variable PASSED [ 19%]
+calculator\static\test_style_css.py::TestCSSVariables::test_border_radius_variable PASSED [ 20%]
+calculator\static\test_style_css.py::TestCSSVariables::test_transition_variable PASSED [ 20%]
+calculator\static\test_style_css.py::TestCSSSelectors::test_body_selector PASSED [ 20%]
+calculator\static\test_style_css.py::TestCSSSelectors::test_calculator_class_selector PASSED [ 21%]
+calculator\static\test_style_css.py::TestCSSSelectors::test_display_class_selector PASSED [ 21%]
+calculator\static\test_style_css.py::TestCSSSelectors::test_button_grid_class_selector PASSED [ 22%]
+calculator\static\test_style_css.py::TestCSSSelectors::test_button_class_selector PASSED [ 22%]
+calculator\static\test_style_css.py::TestCSSSelectors::test_operator_button_selector PASSED [ 22%]
+calculator\static\test_style_css.py::TestCSSSelectors::test_equals_button_selector PASSED [ 23%]
+calculator\static\test_style_css.py::TestCSSSelectors::test_clear_button_selector PASSED [ 23%]
+calculator\static\test_style_css.py::TestCSSProperties::test_flex_centering PASSED [ 23%]
+calculator\static\test_style_css.py::TestCSSProperties::test_grid_layout PASSED [ 24%]
+calculator\static\test_style_css.py::TestCSSProperties::test_backdrop_filter PASSED [ 24%]
+calculator\static\test_style_css.py::TestCSSProperties::test_transition_property PASSED [ 25%]
+calculator\static\test_style_css.py::TestCSSProperties::test_hover_state PASSED [ 25%]
+calculator\static\test_style_css.py::TestCSSProperties::test_active_state PASSED [ 25%]
+calculator\static\test_style_css.py::TestCSSResponsive::test_media_query_exists PASSED [ 26%]
+calculator\static\test_style_css.py::TestCSSResponsive::test_mobile_breakpoint PASSED [ 26%]
+calculator\static\test_style_css.py::TestCSSResponsive::test_responsive_width PASSED [ 26%]
+calculator\static\test_style_css.py::TestCSSBoxModel::test_box_sizing_reset PASSED [ 27%]
+calculator\static\test_style_css.py::TestCSSBoxModel::test_padding_defined PASSED [ 27%]
+calculator\static\test_style_css.py::TestCSSBoxModel::test_margin_reset PASSED [ 27%]
+calculator\static\test_style_css.py::TestCSSBoxModel::test_border_radius_used PASSED [ 28%]
+calculator\static\test_style_css.py::TestCSSColor::test_rgba_colors_used PASSED [ 28%]
+calculator\static\test_style_css.py::TestCSSColor::test_hex_colors_used PASSED [ 29%]
+calculator\static\test_style_css.py::TestCSSColor::test_color_property PASSED [ 29%]
+calculator\static\test_style_css.py::TestCSSColor::test_background_property PASSED [ 29%]
+calculator\static\test_style_css.py::TestCSSFontStyling::test_font_family_defined PASSED [ 30%]
+calculator\static\test_style_css.py::TestCSSFontStyling::test_font_size_defined PASSED [ 30%]
+calculator\static\test_style_css.py::TestCSSFontStyling::test_font_weight_defined PASSED [ 30%]
+calculator\static\test_style_css.py::TestCSSLayout::test_min_height_defined PASSED [ 31%]
+calculator\static\test_style_css.py::TestCSSLayout::test_display_property_used PASSED [ 31%]
+calculator\static\test_style_css.py::TestCSSLayout::test_gap_property_used PASSED [ 32%]
+calculator\static\test_style_css.py::TestCSSComments::test_comments_present PASSED [ 32%]
+calculator\static\test_style_css.py::TestCSSComments::test_section_comments PASSED [ 32%]
+calculator\templates\test_index_html.py::TestHTMLFileStructure::test_html_file_exists PASSED [ 33%]
+calculator\templates\test_index_html.py::TestHTMLFileStructure::test_html_file_is_readable PASSED [ 33%]
+calculator\templates\test_index_html.py::TestHTMLFileStructure::test_html_file_not_empty PASSED [ 33%]
+calculator\templates\test_index_html.py::TestHTMLDocumentStructure::test_doctype_declaration PASSED [ 34%]
+calculator\templates\test_index_html.py::TestHTMLDocumentStructure::test_html_tag PASSED [ 34%]
+calculator\templates\test_index_html.py::TestHTMLDocumentStructure::test_head_section PASSED [ 35%]
+calculator\templates\test_index_html.py::TestHTMLDocumentStructure::test_body_section PASSED [ 35%]
+calculator\templates\test_index_html.py::TestHTMLDocumentStructure::test_main_content_wrapper PASSED [ 35%]
+calculator\templates\test_index_html.py::TestHTMLDocumentStructure::test_lang_attribute PASSED [ 36%]
+calculator\templates\test_index_html.py::TestHTMLHead::test_charset_meta_tag PASSED [ 36%]
+calculator\templates\test_index_html.py::TestHTMLHead::test_viewport_meta_tag PASSED [ 36%]
+calculator\templates\test_index_html.py::TestHTMLHead::test_title_tag PASSED [ 37%]
+calculator\templates\test_index_html.py::TestHTMLHead::test_stylesheet_link PASSED [ 37%]
+calculator\templates\test_index_html.py::TestHTMLHead::test_script_tag PASSED [ 38%]
+calculator\templates\test_index_html.py::TestHTMLCalculatorDisplay::test_display_element_exists PASSED [ 38%]
+calculator\templates\test_index_html.py::TestHTMLCalculatorDisplay::test_display_class PASSED [ 38%]
+calculator\templates\test_index_html.py::TestHTMLCalculatorDisplay::test_display_role_attribute PASSED [ 39%]
+calculator\templates\test_index_html.py::TestHTMLCalculatorDisplay::test_display_aria_live PASSED [ 39%]
+calculator\templates\test_index_html.py::TestHTMLCalculatorDisplay::test_display_initial_content PASSED [ 39%]
+calculator\templates\test_index_html.py::TestHTMLButtonGrid::test_button_grid_exists PASSED [ 40%]
+calculator\templates\test_index_html.py::TestHTMLButtonGrid::test_button_grid_class PASSED [ 40%]
+calculator\templates\test_index_html.py::TestHTMLButtonGrid::test_button_grid_contains_buttons PASSED [ 41%]
+calculator\templates\test_index_html.py::TestHTMLButtons::test_buttons_have_class PASSED [ 41%]
+calculator\templates\test_index_html.py::TestHTMLButtons::test_buttons_have_data_value PASSED [ 41%]
+calculator\templates\test_index_html.py::TestHTMLButtons::test_clear_button_exists PASSED [ 42%]
+calculator\templates\test_index_html.py::TestHTMLButtons::test_equals_button_exists PASSED [ 42%]
+calculator\templates\test_index_html.py::TestHTMLButtons::test_backspace_button_exists PASSED [ 42%]
+calculator\templates\test_index_html.py::TestHTMLButtons::test_digit_buttons_exist PASSED [ 43%]
+calculator\templates\test_index_html.py::TestHTMLButtons::test_operator_buttons_exist PASSED [ 43%]
+calculator\templates\test_index_html.py::TestHTMLButtons::test_parentheses_buttons_exist PASSED [ 44%]
+calculator\templates\test_index_html.py::TestHTMLButtons::test_decimal_point_button_exists PASSED [ 44%]
+calculator\templates\test_index_html.py::TestHTMLOperatorButtons::test_operator_class_on_operators PASSED [ 44%]
+calculator\templates\test_index_html.py::TestHTMLOperatorButtons::test_division_symbol_entity PASSED [ 45%]
+calculator\templates\test_index_html.py::TestHTMLOperatorButtons::test_multiplication_symbol_entity PASSED [ 45%]
+calculator\templates\test_index_html.py::TestHTMLOperatorButtons::test_minus_symbol_entity PASSED [ 45%]
+calculator\templates\test_index_html.py::TestHTMLEqualsButton::test_equals_has_equals_class PASSED [ 46%]
+calculator\templates\test_index_html.py::TestHTMLEqualsButton::test_equals_spans_columns PASSED [ 46%]
+calculator\templates\test_index_html.py::TestHTMLClearButtons::test_clear_buttons_have_class PASSED [ 47%]
+calculator\templates\test_index_html.py::TestHTMLResourceLoading::test_stylesheet_uses_url_for PASSED [ 47%]
+calculator\templates\test_index_html.py::TestHTMLResourceLoading::test_script_uses_url_for PASSED [ 47%]
+calculator\templates\test_index_html.py::TestHTMLResourceLoading::test_script_defer_attribute PASSED [ 48%]
+calculator\templates\test_index_html.py::TestHTMLComments::test_comments_present PASSED [ 48%]
+calculator\templates\test_index_html.py::TestHTMLComments::test_display_documented PASSED [ 48%]
+calculator\templates\test_index_html.py::TestHTMLComments::test_button_grid_documented PASSED [ 49%]
+calculator\templates\test_index_html.py::TestHTMLLayout::test_calculator_container PASSED [ 49%]
+calculator\templates\test_index_html.py::TestHTMLLayout::test_nested_structure PASSED [ 50%]
+calculator\templates\test_index_html.py::TestHTMLLayout::test_button_grid_closure PASSED [ 50%]
+calculator\templates\test_index_html.py::TestHTMLAccessibility::test_semantic_html PASSED [ 50%]
+calculator\templates\test_index_html.py::TestHTMLAccessibility::test_aria_live_region PASSED [ 51%]
+calculator\templates\test_index_html.py::TestHTMLAccessibility::test_role_attribute PASSED [ 51%]
+calculator\templates\test_index_html.py::TestHTMLAccessibility::test_descriptive_comments PASSED [ 51%]
+calculator\templates\test_index_html.py::TestHTMLValidation::test_no_unclosed_tags PASSED [ 52%]
+calculator\templates\test_index_html.py::TestHTMLValidation::test_no_unmatched_buttons PASSED [ 52%]
+calculator\templates\test_index_html.py::TestHTMLValidation::test_meta_tags_self_closing PASSED [ 52%]
+calculator\templates\test_index_html.py::TestHTMLContent::test_calculator_title PASSED [ 53%]
+calculator\templates\test_index_html.py::TestHTMLContent::test_button_text_visible PASSED [ 53%]
+calculator\templates\test_index_html.py::TestHTMLContent::test_initial_display_value PASSED [ 54%]
+calculator\test___init__.py::TestCreateAppFactory::test_create_app_returns_flask_app PASSED [ 54%]
+calculator\test___init__.py::TestCreateAppFactory::test_create_app_imports_name PASSED [ 54%]
+calculator\test___init__.py::TestCreateAppFactory::test_create_app_templates_folder PASSED [ 55%]
+calculator\test___init__.py::TestCreateAppFactory::test_create_app_static_folder PASSED [ 55%]
+calculator\test___init__.py::TestCreateAppBlueprint::test_blueprint_registered PASSED [ 55%]
+calculator\test___init__.py::TestCreateAppBlueprint::test_blueprint_routes_registered PASSED [ 56%]
+calculator\test___init__.py::TestCreateAppBlueprint::test_multiple_app_instances PASSED [ 56%]
+calculator\test___init__.py::TestCreateAppSecretKey::test_secret_key_from_environment PASSED [ 57%]
+calculator\test___init__.py::TestCreateAppSecretKey::test_secret_key_default_dev PASSED [ 57%]
+calculator\test___init__.py::TestCreateAppSecretKey::test_secret_key_production_without_env_var PASSED [ 57%]
+calculator\test___init__.py::TestCreateAppSecretKey::test_secret_key_production_with_env_var PASSED [ 58%]
+calculator\test___init__.py::TestCreateAppConfiguration::test_app_config_is_dict FAILED [ 58%]
+calculator\test___init__.py::TestCreateAppConfiguration::test_secret_key_in_config FAILED [ 58%]
+calculator\test___init__.py::TestCreateAppConfiguration::test_testing_mode_can_be_set FAILED [ 59%]
+calculator\test___init__.py::TestCreateAppConfiguration::test_app_context_works FAILED [ 59%]
+calculator\test___init__.py::TestCreateAppConfiguration::test_test_client_works FAILED [ 60%]
+calculator\test___init__.py::TestCreateAppTemplateLoading::test_templates_folder_exists FAILED [ 60%]
+calculator\test___init__.py::TestCreateAppTemplateLoading::test_static_folder_exists FAILED [ 60%]
+calculator\test___init__.py::TestCreateAppErrorHandling::test_create_app_idempotent FAILED [ 61%]
+calculator\test___init__.py::TestCreateAppErrorHandling::test_create_app_thread_safe_config FAILED [ 61%]
+calculator\test___init__.py::TestCreateAppIntegration::test_full_request_cycle FAILED [ 61%]
+calculator\test___init__.py::TestCreateAppIntegration::test_app_blueprint_isolation FAILED [ 62%]
+calculator\test_engine.py::TestCalculatorBasicOperations::test_addition PASSED [ 62%]
+calculator\test_engine.py::TestCalculatorBasicOperations::test_subtraction PASSED [ 63%]
+calculator\test_engine.py::TestCalculatorBasicOperations::test_multiplication PASSED [ 63%]
+calculator\test_engine.py::TestCalculatorBasicOperations::test_division PASSED [ 63%]
+calculator\test_engine.py::TestCalculatorBasicOperations::test_floor_division PASSED [ 64%]
+calculator\test_engine.py::TestCalculatorBasicOperations::test_modulo PASSED [ 64%]
+calculator\test_engine.py::TestCalculatorBasicOperations::test_exponentiation PASSED [ 64%]
+calculator\test_engine.py::TestCalculatorPrecedence::test_multiplication_before_addition PASSED [ 65%]
+calculator\test_engine.py::TestCalculatorPrecedence::test_division_before_subtraction PASSED [ 65%]
+calculator\test_engine.py::TestCalculatorPrecedence::test_exponentiation_before_multiplication PASSED [ 66%]
+calculator\test_engine.py::TestCalculatorParentheses::test_simple_parentheses PASSED [ 66%]
+calculator\test_engine.py::TestCalculatorParentheses::test_nested_parentheses PASSED [ 66%]
+calculator\test_engine.py::TestCalculatorParentheses::test_multiple_groups PASSED [ 67%]
+calculator\test_engine.py::TestCalculatorUnaryOperators::test_unary_negation PASSED [ 67%]
+calculator\test_engine.py::TestCalculatorUnaryOperators::test_unary_positive PASSED [ 67%]
+calculator\test_engine.py::TestCalculatorUnaryOperators::test_double_negation PASSED [ 68%]
+calculator\test_engine.py::TestCalculatorUnaryOperators::test_negation_in_expression PASSED [ 68%]
+calculator\test_engine.py::TestCalculatorFloatingPoint::test_decimal_division PASSED [ 69%]
+calculator\test_engine.py::TestCalculatorFloatingPoint::test_decimal_input PASSED [ 69%]
+calculator\test_engine.py::TestCalculatorFloatingPoint::test_mixed_integer_decimal PASSED [ 69%]
+calculator\test_engine.py::TestCalculatorComplexExpressions::test_four_operations PASSED [ 70%]
+calculator\test_engine.py::TestCalculatorComplexExpressions::test_deeply_nested PASSED [ 70%]
+calculator\test_engine.py::TestCalculatorComplexExpressions::test_whitespace_handling PASSED [ 70%]
+calculator\test_engine.py::TestCalculatorErrors::test_empty_expression PASSED [ 71%]
+calculator\test_engine.py::TestCalculatorErrors::test_whitespace_only PASSED [ 71%]
+calculator\test_engine.py::TestCalculatorErrors::test_syntax_error PASSED [ 72%]
+calculator\test_engine.py::TestCalculatorErrors::test_unclosed_parenthesis PASSED [ 72%]
+calculator\test_engine.py::TestCalculatorErrors::test_division_by_zero PASSED [ 72%]
+calculator\test_engine.py::TestCalculatorErrors::test_modulo_by_zero PASSED [ 73%]
+calculator\test_engine.py::TestCalculatorErrors::test_dangerous_code_disallowed PASSED [ 73%]
+calculator\test_engine.py::TestCalculatorErrors::test_variable_access_disallowed PASSED [ 73%]
+calculator\test_engine.py::TestCalculatorErrors::test_string_literals_disallowed FAILED [ 74%]
+calculator\test_engine.py::TestCalculatorErrors::test_list_comprehension_disallowed PASSED [ 74%]
+calculator\test_engine.py::TestCalculatorErrors::test_lambda_disallowed PASSED [ 75%]
+calculator\test_engine.py::TestCalculatorAllowedNodes::test_allowed_nodes_contains_expression PASSED [ 75%]
+calculator\test_engine.py::TestCalculatorAllowedNodes::test_allowed_nodes_contains_constant PASSED [ 75%]
+calculator\test_engine.py::TestCalculatorAllowedNodes::test_allowed_nodes_contains_binop PASSED [ 76%]
+calculator\test_engine.py::TestCalculatorAllowedNodes::test_allowed_nodes_contains_add PASSED [ 76%]
+calculator\test_engine.py::TestCalculatorAllowedNodes::test_allowed_nodes_frozen PASSED [ 76%]
+calculator\test_engine.py::TestCalculatorInstanceIndependence::test_multiple_instances PASSED [ 77%]
+calculator\test_engine.py::TestCalculatorInstanceIndependence::test_stateless PASSED [ 77%]
+calculator\test_engine.py::TestCalculatorSpecialCases::test_zero PASSED  [ 77%]
+calculator\test_engine.py::TestCalculatorSpecialCases::test_negative_result PASSED [ 78%]
+calculator\test_engine.py::TestCalculatorSpecialCases::test_large_numbers PASSED [ 78%]
+calculator\test_engine.py::TestCalculatorSpecialCases::test_very_small_decimal PASSED [ 79%]
+calculator\test_extensions.py::TestCalculatorSingleton::test_calculator_is_instance PASSED [ 79%]
+calculator\test_extensions.py::TestCalculatorSingleton::test_calculator_is_module_level PASSED [ 79%]
+calculator\test_extensions.py::TestCalculatorSingleton::test_calculator_same_instance_on_reimport PASSED [ 80%]
+calculator\test_extensions.py::TestCalculatorSingleton::test_calculator_functionality PASSED [ 80%]
+calculator\test_extensions.py::TestCalculatorSingleton::test_calculator_is_stateless PASSED [ 80%]
+calculator\test_extensions.py::TestCalculatorSingleton::test_calculator_error_handling PASSED [ 81%]
+calculator\test_extensions.py::TestCalculatorExtensionsImport::test_calculator_importable_from_extensions PASSED [ 81%]
+calculator\test_extensions.py::TestCalculatorExtensionsImport::test_calculator_not_importable_from_engine PASSED [ 82%]
+calculator\test_extensions.py::TestCalculatorExtensionsImport::test_multiple_operations_sequence PASSED [ 82%]
+calculator\test_routes.py::TestBlueprintCreation::test_blueprint_exists PASSED [ 82%]
+calculator\test_routes.py::TestBlueprintCreation::test_blueprint_name PASSED [ 83%]
+calculator\test_routes.py::TestBlueprintCreation::test_blueprint_registered ERROR [ 83%]
+calculator\test_routes.py::TestIndexRoute::test_index_returns_200 ERROR  [ 83%]
+calculator\test_routes.py::TestIndexRoute::test_index_returns_html ERROR [ 84%]
+calculator\test_routes.py::TestIndexRoute::test_index_contains_display ERROR [ 84%]
+calculator\test_routes.py::TestIndexRoute::test_index_contains_button_grid ERROR [ 85%]
+calculator\test_routes.py::TestIndexRoute::test_index_contains_script ERROR [ 85%]
+calculator\test_routes.py::TestIndexRoute::test_index_contains_style ERROR [ 85%]
+calculator\test_routes.py::TestIndexRoute::test_index_content_type ERROR [ 86%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_success ERROR [ 86%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_float_result ERROR [ 86%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_integer_result_no_decimal ERROR [ 87%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_negative_result ERROR [ 87%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_complex_expression ERROR [ 88%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_exponentiation ERROR [ 88%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_empty_expression ERROR [ 88%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_syntax_error ERROR [ 89%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_division_by_zero ERROR [ 89%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_unsafe_expression ERROR [ 89%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_missing_expression_key ERROR [ 90%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_null_expression ERROR [ 90%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_whitespace_only_expression ERROR [ 91%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_response_json_format ERROR [ 91%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_error_response_json_format ERROR [ 91%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_force_json_parsing ERROR [ 92%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_various_operations ERROR [ 92%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_large_result ERROR [ 92%]
+calculator\test_routes.py::TestCalculateRoute::test_calculate_very_small_result ERROR [ 93%]
+calculator\test_routes.py::TestRouteIntegration::test_index_and_calculate_together ERROR [ 93%]
+calculator\test_routes.py::TestRouteIntegration::test_multiple_calculations ERROR [ 94%]
+test_run.py::TestMainFunction::test_main_creates_app PASSED              [ 94%]
+test_run.py::TestMainFunction::test_main_sets_flask_env PASSED           [ 94%]
+test_run.py::TestMainFunction::test_main_calls_app_run PASSED            [ 95%]
+test_run.py::TestMainFunction::test_main_app_run_debug_enabled PASSED    [ 95%]
+test_run.py::TestMainFunction::test_main_app_run_port PASSED             [ 95%]
+test_run.py::TestMainFunction::test_main_app_run_parameters PASSED       [ 96%]
+test_run.py::TestMainIntegration::test_main_with_real_app_creation FAILED [ 96%]
+test_run.py::TestMainIntegration::test_main_flask_env_setdefault PASSED  [ 97%]
+test_run.py::TestMainFunctionSignature::test_main_is_callable PASSED     [ 97%]
+test_run.py::TestMainFunctionSignature::test_main_returns_none PASSED    [ 97%]
+test_run.py::TestMainFunctionSignature::test_main_takes_no_arguments PASSED [ 98%]
+test_run.py::TestRunModuleStructure::test_run_module_has_main PASSED     [ 98%]
+test_run.py::TestRunModuleStructure::test_run_module_has_name_check PASSED [ 98%]
+test_run.py::TestRunModuleStructure::test_create_app_import PASSED       [ 99%]
+test_run.py::TestMainEnvironmentHandling::test_main_preserves_other_env_vars PASSED [ 99%]
+test_run.py::TestMainEnvironmentHandling::test_main_respects_existing_flask_env PASSED [100%]
+
+=================================== ERRORS ====================================
+______ ERROR at setup of TestBlueprintCreation.test_blueprint_registered ______
+E   RuntimeError: SECRET_KEY must be set in production
+___________ ERROR at setup of TestIndexRoute.test_index_returns_200 ___________
+E   RuntimeError: SECRET_KEY must be set in production
+__________ ERROR at setup of TestIndexRoute.test_index_returns_html ___________
+E   RuntimeError: SECRET_KEY must be set in production
+________ ERROR at setup of TestIndexRoute.test_index_contains_display _________
+E   RuntimeError: SECRET_KEY must be set in production
+______ ERROR at setup of TestIndexRoute.test_index_contains_button_grid _______
+E   RuntimeError: SECRET_KEY must be set in production
+_________ ERROR at setup of TestIndexRoute.test_index_contains_script _________
+E   RuntimeError: SECRET_KEY must be set in production
+_________ ERROR at setup of TestIndexRoute.test_index_contains_style __________
+E   RuntimeError: SECRET_KEY must be set in production
+__________ ERROR at setup of TestIndexRoute.test_index_content_type ___________
+E   RuntimeError: SECRET_KEY must be set in production
+_________ ERROR at setup of TestCalculateRoute.test_calculate_success _________
+E   RuntimeError: SECRET_KEY must be set in production
+______ ERROR at setup of TestCalculateRoute.test_calculate_float_result _______
+E   RuntimeError: SECRET_KEY must be set in production
+_ ERROR at setup of TestCalculateRoute.test_calculate_integer_result_no_decimal _
+E   RuntimeError: SECRET_KEY must be set in production
+_____ ERROR at setup of TestCalculateRoute.test_calculate_negative_result _____
+E   RuntimeError: SECRET_KEY must be set in production
+___ ERROR at setup of TestCalculateRoute.test_calculate_complex_expression ____
+E   RuntimeError: SECRET_KEY must be set in production
+_____ ERROR at setup of TestCalculateRoute.test_calculate_exponentiation ______
+E   RuntimeError: SECRET_KEY must be set in production
+____ ERROR at setup of TestCalculateRoute.test_calculate_empty_expression _____
+E   RuntimeError: SECRET_KEY must be set in production
+______ ERROR at setup of TestCalculateRoute.test_calculate_syntax_error _______
+E   RuntimeError: SECRET_KEY must be set in production
+____ ERROR at setup of TestCalculateRoute.test_calculate_division_by_zero _____
+E   RuntimeError: SECRET_KEY must be set in production
+____ ERROR at setup of TestCalculateRoute.test_calculate_unsafe_expression ____
+E   RuntimeError: SECRET_KEY must be set in production
+_ ERROR at setup of TestCalculateRoute.test_calculate_missing_expression_key __
+E   RuntimeError: SECRET_KEY must be set in production
+_____ ERROR at setup of TestCalculateRoute.test_calculate_null_expression _____
+E   RuntimeError: SECRET_KEY must be set in production
+_ ERROR at setup of TestCalculateRoute.test_calculate_whitespace_only_expression _
+E   RuntimeError: SECRET_KEY must be set in production
+__ ERROR at setup of TestCalculateRoute.test_calculate_response_json_format ___
+E   RuntimeError: SECRET_KEY must be set in production
+_ ERROR at setup of TestCalculateRoute.test_calculate_error_response_json_format _
+E   RuntimeError: SECRET_KEY must be set in production
+___ ERROR at setup of TestCalculateRoute.test_calculate_force_json_parsing ____
+E   RuntimeError: SECRET_KEY must be set in production
+___ ERROR at setup of TestCalculateRoute.test_calculate_various_operations ____
+E   RuntimeError: SECRET_KEY must be set in production
+______ ERROR at setup of TestCalculateRoute.test_calculate_large_result _______
+E   RuntimeError: SECRET_KEY must be set in production
+____ ERROR at setup of TestCalculateRoute.test_calculate_very_small_result ____
+E   RuntimeError: SECRET_KEY must be set in production
+__ ERROR at setup of TestRouteIntegration.test_index_and_calculate_together ___
+E   RuntimeError: SECRET_KEY must be set in production
+______ ERROR at setup of TestRouteIntegration.test_multiple_calculations ______
+E   RuntimeError: SECRET_KEY must be set in production
+================================== FAILURES ===================================
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+E   ValueError: could not convert string to float: 'hello'
+
+During handling of the above exception, another exception occurred:
+E   AssertionError: Regex pattern did not match.
+      Expected regex: 'Unsafe or unsupported operation'
+      Actual message: "could not convert string to float: 'hello'"
+C:\gh\vibedev\vibedev-output\calculator\test_engine.py:236: AssertionError: Regex pattern did not match.
+E   RuntimeError: SECRET_KEY must be set in production
+C:\gh\vibedev\vibedev-output\calculator\__init__.py:41: RuntimeError: SECRET_KEY must be set in production
+============================== warnings summary ===============================
+calculator\engine.py:35
+  C:\\gh\\vibedev\\vibedev-output\\calculator\\engine.py:35: DeprecationWarning: ast.Num is deprecated and will be removed in Python 3.14; use ast.Constant instead\n    if hasattr(ast, "Num"):          # pragma: no cover \u2013 Python \u2264 3.7 / compat
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+ERROR calculator\test_routes.py::TestBlueprintCreation::test_blueprint_registered
+ERROR calculator\test_routes.py::TestIndexRoute::test_index_returns_200 - Run...
+ERROR calculator\test_routes.py::TestIndexRoute::test_index_returns_html - Ru...
+ERROR calculator\test_routes.py::TestIndexRoute::test_index_contains_display
+ERROR calculator\test_routes.py::TestIndexRoute::test_index_contains_button_grid
+ERROR calculator\test_routes.py::TestIndexRoute::test_index_contains_script
+ERROR calculator\test_routes.py::TestIndexRoute::test_index_contains_style - ...
+ERROR calculator\test_routes.py::TestIndexRoute::test_index_content_type - Ru...
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_success
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_float_result
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_integer_result_no_decimal
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_negative_result
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_complex_expression
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_exponentiation
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_empty_expression
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_syntax_error
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_division_by_zero
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_unsafe_expression
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_missing_expression_key
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_null_expression
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_whitespace_only_expression
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_response_json_format
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_error_response_json_format
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_force_json_parsing
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_various_operations
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_large_result
+ERROR calculator\test_routes.py::TestCalculateRoute::test_calculate_very_small_result
+ERROR calculator\test_routes.py::TestRouteIntegration::test_index_and_calculate_together
+ERROR calculator\test_routes.py::TestRouteIntegration::test_multiple_calculations
+FAILED calculator\test___init__.py::TestCreateAppConfiguration::test_app_config_is_dict
+FAILED calculator\test___init__.py::TestCreateAppConfiguration::test_secret_key_in_config
+FAILED calculator\test___init__.py::TestCreateAppConfiguration::test_testing_mode_can_be_set
+FAILED calculator\test___init__.py::TestCreateAppConfiguration::test_app_context_works
+FAILED calculator\test___init__.py::TestCreateAppConfiguration::test_test_client_works
+FAILED calculator\test___init__.py::TestCreateAppTemplateLoading::test_templates_folder_exists
+FAILED calculator\test___init__.py::TestCreateAppTemplateLoading::test_static_folder_exists
+FAILED calculator\test___init__.py::TestCreateAppErrorHandling::test_create_app_idempotent
+FAILED calculator\test___init__.py::TestCreateAppErrorHandling::test_create_app_thread_safe_config
+FAILED calculator\test___init__.py::TestCreateAppIntegration::test_full_request_cycle
+FAILED calculator\test___init__.py::TestCreateAppIntegration::test_app_blueprint_isolation
+FAILED calculator\test_engine.py::TestCalculatorErrors::test_string_literals_disallowed
+FAILED test_run.py::TestMainIntegration::test_main_with_real_app_creation - R...
+============ 13 failed, 226 passed, 1 warning, 29 errors in 0.61s =============
