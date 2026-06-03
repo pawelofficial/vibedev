@@ -67,7 +67,7 @@ def test_default_config():
     assert cfg["model"].startswith("claude-")
     assert cfg["workspace_root"]
     assert cfg["common_knowledge"] is True
-    assert cfg["team"] == []
+    assert cfg["team"] == [("developer", None)]
 
 
 def test_set_permissions_valid():
@@ -245,14 +245,18 @@ def test_set_team_accepts_model_aliases():
         set_team(original)
 
 
-def test_set_team_empty_disables_team_mode():
+def test_set_team_accepts_quality_assurance_role():
     original = get_config()["team"]
     try:
-        set_team(["developer"])
-        set_team([])
-        assert get_config()["team"] == []
+        set_team(["quality_assurance"])
+        assert get_config()["team"] == [("quality_assurance", None)]
     finally:
         set_team(original)
+
+
+def test_set_team_rejects_empty_team():
+    with pytest.raises(ValueError, match="at least one role"):
+        set_team([])
 
 
 def test_set_team_rejects_manager_bare():

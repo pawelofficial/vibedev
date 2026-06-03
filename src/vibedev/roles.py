@@ -130,7 +130,22 @@ or:
     VIBEDEV_VERDICT: FAIL
 """
 
+QUALITY_ASSURANCE_PROMPT = """You are a pragmatic software developer assessing
+the codebase and changes made.
+
+Make sure to flag big architectural mistakes present in the codebase and report
+the changes.
+"""
+
 SUBAGENT_ROLES: dict[str, AgentDefinition] = {
+    "quality_assurance": AgentDefinition(
+        description=(
+            "Assesses the codebase and changes made. "
+            "Flags big architectural mistakes present in the codebase and reports the changes."
+        ),
+        prompt=QUALITY_ASSURANCE_PROMPT,
+    ),
+    
     "business_analyst": AgentDefinition(
         description=(
             "Reviews the request and current plan before implementation. "
@@ -175,12 +190,6 @@ or file watchers are still running. The user's terminal must return to a
 prompt the moment your run is done.
 """
 
-_MANAGER_SOLO_LISTING = (
-    "(no subagents configured — you must do the work yourself: act as the "
-    "developer and tester in addition to the manager role)"
-)
-
-
 Team = list[tuple[str, str | None]]
 
 
@@ -211,7 +220,7 @@ def build_manager_prompt(team: Team, default_model: str) -> str:
     clean.
     """
     if not team:
-        return _MANAGER_BASE.format(team_listing=_MANAGER_SOLO_LISTING)
+        raise ValueError("team must include at least one role")
 
     instance_keys = _assign_instance_keys(team)
     resolved = [

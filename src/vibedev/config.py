@@ -25,7 +25,7 @@ _VALID_PERMISSIONS: frozenset[str] = frozenset(
 # stays importable without the Claude Agent SDK installed (useful for tests
 # and for the CLI's ``--help``).
 _VALID_SUBAGENT_ROLES: frozenset[str] = frozenset(
-    {"business_analyst", "developer", "tester"}
+    {"business_analyst", "developer", "quality_assurance", "tester"}
 )
 
 
@@ -44,7 +44,7 @@ _config: Config = {
     "model": "claude-opus-4-7",
     "workspace_root": "./vibedev-output",
     "common_knowledge": True,
-    "team": [],
+    "team": [("developer", None)],
 }
 
 
@@ -95,8 +95,8 @@ def set_team(roles: list[str | tuple[str, str]]) -> None:
 
     Forms can mix freely: ``["developer", ("tester", "claude-sonnet-4-6")]``.
 
-    Currently the valid roles are ``"business_analyst"``, ``"developer"``, and
-    ``"tester"``.
+    Currently the valid roles are ``"business_analyst"``, ``"developer"``,
+    ``"quality_assurance"``, and ``"tester"``.
     The ``"manager"`` role is implicit (it is always the main agent when a
     team is configured) and must not be included. The manager's model is
     whatever :func:`set_model` was last called with.
@@ -106,13 +106,16 @@ def set_team(roles: list[str | tuple[str, str]]) -> None:
     parallel. Internally they get unique SDK names (``developer``,
     ``developer-2``, ...); the user only ever deals with role names.
 
-    An empty list (the default) disables team mode entirely: the main agent
-    runs the single-orchestrator prompt and no subagents are exposed.
+    At least one role is required; the default is a single ``"developer"``
+    team. The main agent always runs either the coded developer/tester workflow
+    or the fallback manager prompt.
     """
     if not isinstance(roles, list):
         raise ValueError(
             "team must be a list of role names and/or (role, model) tuples"
         )
+    if not roles:
+        raise ValueError("team must include at least one role")
 
     normalized: list[tuple[str, str | None]] = []
     for i, entry in enumerate(roles):

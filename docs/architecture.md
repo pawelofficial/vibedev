@@ -34,7 +34,7 @@ object.
 3. Resolves/creates the workspace via `workspace.py`.
 4. Creates sibling transcript and conversation log paths.
 5. Enters `_run(...)` in `core.py`.
-6. Chooses solo mode, coded team mode, or fallback manager mode.
+6. Chooses coded team mode or fallback manager mode.
 7. Streams every SDK message to stdout and the transcript log; records each
    stage prompt/response pair to the conversation log.
 8. Returns the workspace path when complete.
@@ -51,22 +51,14 @@ Each run writes two files:
   user prompt plus each coded workflow stage's prompt and final response, but
   omits tool reads and command output.
 
-## Solo Mode
+## Team Mode
 
-Solo mode is active when `set_team([])` is configured.
-
-`core.py` runs a single SDK query with `ORCHESTRATOR_SYSTEM_PROMPT` from
-`prompts.py`. The solo prompt owns planning, implementation, verification, and
-README updates. It maintains `.vibedev/plan.md` by prompt instruction.
-
-This path is intentionally simple and preserves the original wrapper design.
-
-## Normal Team Mode
-
-Normal team mode is active when the configured team contains both `developer`
-and `tester`. Python also runs an internal ad hoc `knowledge_curator` at the
-start of every coded team run. If `business_analyst` is configured, Python runs
-it as a planning-review stage before choosing the next task.
+Every run has at least one configured role. The default is a single
+`developer`, which uses the fallback manager path. The coded workflow is active
+when the configured team contains both `developer` and `tester`. Python also
+runs an internal ad hoc `knowledge_curator` at the start of every coded team
+run. If `business_analyst` is configured, Python runs it as a planning-review
+stage before choosing the next task.
 
 This mode is code-owned in `core.py`, not manager-prompt-owned. The important
 invariant is:
@@ -106,9 +98,9 @@ The coded flow is:
 17. After pass, run a README updater agent with the common knowledge pointer.
 18. Restore `.vibedev/plan.md` if the README updater agent edits it.
 
-The business analyst, developer, and tester prompts in `roles.py` describe role
-behavior only. They do not own plan lifecycle, task selection, checkoff, retry
-policy, or blocker recording.
+The business analyst, developer, tester, and quality assurance prompts in
+`roles.py` describe role behavior only. They do not own plan lifecycle, task
+selection, checkoff, retry policy, or blocker recording.
 
 The analyst does not edit files. It returns structured Markdown with:
 
@@ -206,6 +198,7 @@ update the helpers in `core.py` and the tests in `tests/test_smoke.py`.
 - `TESTER_PROMPT`
 - `BUSINESS_ANALYST_PROMPT`
 - `KNOWLEDGE_CURATOR_PROMPT`
+- `QUALITY_ASSURANCE_PROMPT`
 - fallback manager prompt helpers
 - `SUBAGENT_ROLES`
 

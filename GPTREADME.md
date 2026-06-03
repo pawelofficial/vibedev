@@ -31,8 +31,9 @@ or "vibeception".
 
 ## Current Architecture
 
-Solo mode (`set_team([])`) still uses one Claude agent with
-`ORCHESTRATOR_SYSTEM_PROMPT` from `src/vibedev/prompts.py`.
+There is no no-team solo mode. The default team is one `developer`, which uses
+the fallback manager path unless a configured team contains both `developer`
+and `tester`.
 
 Normal team mode is now code-owned when both `developer` and `tester` are
 configured. If `business_analyst` is present, it runs as a coded planning
@@ -73,9 +74,8 @@ that do not include both `developer` and `tester`.
 - `src/vibedev/core.py` - public `prompt(...)`, SDK query driving, full
   transcript logging, lightweight conversation logging, and the coded
   developer/tester workflow.
-- `src/vibedev/roles.py` - business analyst/developer/tester role prompts plus
-  fallback manager helpers.
-- `src/vibedev/prompts.py` - solo orchestrator prompt.
+- `src/vibedev/roles.py` - business analyst/developer/tester/quality assurance
+  role prompts plus fallback manager helpers.
 - `src/vibedev/config.py` - global config and `set_*` functions.
 - `src/vibedev/workspace.py` - workspace creation.
 - `tests/test_smoke.py` - current regression suite.
@@ -111,8 +111,8 @@ runs require the Claude Code CLI installed and authenticated.
   flow. Coded invariants belong in `core.py`.
 - Agents should own judgment, requirements critique, code, and test work, not
   task lifecycle state.
-- `.vibedev/plan.md` is inside the generated workspace because team and solo
-  runs need resumability.
+- `.vibedev/plan.md` is inside the generated workspace because team runs need
+  resumability.
 - `.vibedev/common_knowledge.md` is generated in team mode. Prompts mention its
   path and purpose, but do not inject the full contents. It now includes a
   Python-written `knowledge_curator` report from an internal ad hoc agent.

@@ -66,8 +66,9 @@ the workspace, so the caller can open / inspect the generated code afterwards.
 ### Team mode
 
 `set_team([...])` opts into a multi-agent run. Pass a list of **role** names
-(currently `"business_analyst"`, `"developer"`, and `"tester"`). When developer
-and tester are configured, Python owns the lifecycle: read/create
+(currently `"business_analyst"`, `"developer"`, `"quality_assurance"`, and
+`"tester"`). When developer and tester are configured, Python owns the
+lifecycle: read/create
 `.vibedev/plan.md`, append the current request as a pending task when needed,
 optionally write a draft `.vibedev/common_knowledge.md`, optionally run an
 internal ad hoc `knowledge_curator` to inspect the workspace and return
@@ -115,9 +116,9 @@ that role.
 the internal `knowledge_curator` stage and omits the common-knowledge pointer
 from role prompts. The default is `True`.
 
-When `set_team([])` (the default), team mode is off entirely: the main agent
-runs the single-orchestrator prompt (`ORCHESTRATOR_SYSTEM_PROMPT`) and no
-subagents are exposed. The non-team path is preserved bit-for-bit.
+`set_team([])` is invalid. Every run has at least one configured role; the
+default is a single `developer`, which uses the fallback manager path. Teams
+with both `developer` and `tester` use the coded workflow.
 
 **On turns.** We do not set `max_turns`; SDK defaults apply. In the coded
 developer/tester loop, each role is a separate `query(...)` call that runs to
@@ -148,7 +149,7 @@ These three defaults define the package's UX. Don't change them casually:
 
 ## Architecture
 
-The package is intentionally small — six modules under `src/vibedev/`:
+The package is intentionally small — five modules under `src/vibedev/`:
 
 - **`config.py`** — owns a single module-level dict (`_config`) and the `set_*`
   setters that mutate it. State is global on purpose (see "Public API" above).
@@ -169,14 +170,6 @@ The package is intentionally small — six modules under `src/vibedev/`:
   elsewhere. There is intentionally **no timestamp nesting** — the configured
   `workspace_root` (or per-call `workspace=`) is used as-is. Re-running with
   the same path operates on whatever's already there.
-- **`prompts.py`** — `ORCHESTRATOR_SYSTEM_PROMPT`. The system prompt used
-  when **no team is configured** — a single self-sufficient agent that
-  plans, implements, verifies (without leaving long-running processes
-  alive), and writes a short README. It also owns the `.vibedev/plan.md`
-  contract (see "Resumability" below): read-and-reconcile on startup,
-  append new asks instead of overwriting, mark items off as they
-  complete. This is the biggest lever on no-team-mode behavior; when
-  iterating on solo-run output quality, edit this first.
 - **`roles.py`** — the team-mode prompt registry. Holds the static
   `BUSINESS_ANALYST_PROMPT`, `KNOWLEDGE_CURATOR_PROMPT`, `DEVELOPER_PROMPT`,
   and `TESTER_PROMPT`, the
@@ -195,8 +188,8 @@ The package is intentionally small — six modules under `src/vibedev/`:
   prints a header to stderr (unless `quiet`), and
   uses `anyio.run` to drive the async `_run`. `_run` branches on team shape:
   developer+tester teams use the coded lifecycle in
-  `_run_coded_team_workflow`; solo mode uses `ORCHESTRATOR_SYSTEM_PROMPT`;
-  other team shapes use the fallback SDK-native manager prompt.
+  `_run_coded_team_workflow`; other team shapes use the fallback SDK-native
+  manager prompt.
   `_run_coded_team_workflow` owns plan creation/parsing/writing, optional
   common knowledge generation, optional analyst review, task selection, checkoff,
   blocker recording, and the dev/test retry policy. Every
@@ -224,8 +217,8 @@ The package is intentionally small — six modules under `src/vibedev/`:
 2. `core.prompt` validates the string is non-empty, snapshots config with
    `get_config()`, resolves workspace via `ensure_workspace(...)`.
 3. `anyio.run(_run, ...)` bridges sync→async.
-4. `_run` chooses solo, coded developer+tester team mode, or fallback manager
-   mode based on config.
+4. `_run` chooses coded developer+tester team mode or fallback manager mode
+   based on config.
 5. In coded team mode, Python updates `.vibedev/plan.md`, optionally runs the ad hoc
    knowledge curator to enrich `.vibedev/common_knowledge.md`, sends one
    pending task through developer/tester `query(...)` calls, and updates plan
@@ -265,9 +258,8 @@ models *are* supported via the `(role, model)` tuple form of `set_team`
 Because the workspace is reused as-is across runs (no timestamp nesting), a
 second `vibedev.prompt(...)` call against the same workspace can pick up
 where the previous one left off — *if* there's enough state on disk to
-reconstruct progress. In normal developer+tester team mode, Python owns
-`.vibedev/plan.md` (under the workspace) as a checklist of atomic tasks. Solo
-mode still uses the solo orchestrator prompt for this behavior.
+reconstruct progress. In developer+tester team mode, Python owns
+`.vibedev/plan.md` (under the workspace) as a checklist of atomic tasks.
 
 The contract:
 
@@ -291,8 +283,7 @@ The contract:
   `VIBEDEV_VERDICT: PASS`; repeated failures leave the task `[ ]` and append a
   blocker to `## History`.
 - **Plan modification by the user**: the user can edit `.vibedev/plan.md`
-  directly (the solo orchestrator prompt also accepts plan-modification
-  requests phrased in natural language, e.g. "drop the Docker step").
+  directly.
 - **File location is hidden**: `.vibedev/` rather than `PLAN.md` at the
   workspace root, so the plan file does not ship as a project artifact in
   the generated code.
@@ -300,8 +291,7 @@ The contract:
 
 For normal team mode this is **code-layer behavior** in `core.py`. If you
 change the file path, format, parser, or checkoff rules, update the plan helper
-functions and tests in `tests/test_smoke.py`. Solo mode remains prompt-layer
-behavior in `prompts.py`.
+functions and tests in `tests/test_smoke.py`.
 
 A killed-mid-task run leaves the workspace partially mutated; the
 reconciliation step on the next run is best-effort, not transactional.
@@ -366,23 +356,22 @@ install / debug docs you touch.
 
 ### Long-running processes are the system's sharpest edge
 
-The orchestrator prompt explicitly forbids leaving servers / watchers /
-daemons running at the end of a run, because we cannot reliably reap them
-from Python: they're grandchildren spawned by the Claude Code CLI's bash
-tool, not direct children of our process. On Windows in particular, a
-`flask run` left in the foreground will hold the parent terminal even after
-`vibedev.prompt()` returns.
+Role prompts explicitly forbid leaving servers / watchers / daemons running at
+the end of a run, because we cannot reliably reap them from Python: they're
+grandchildren spawned by the Claude Code CLI's bash tool, not direct children
+of our process. On Windows in particular, a `flask run` left in the foreground
+will hold the parent terminal even after `vibedev.prompt()` returns.
 
-If you change `prompts.py`, preserve the "verify without leaving processes
-alive" rules — use framework test clients (`app.test_client()`,
-`TestClient`), direct CLI invocation, or a background-then-kill+curl
-pattern. Never foreground dev servers. If you genuinely need a reaper, it
+If you change role prompts, preserve the "verify without leaving processes
+alive" rules — use framework test clients (`app.test_client()`, `TestClient`),
+direct CLI invocation, or a background-then-kill+curl pattern. Never foreground
+dev servers. If you genuinely need a reaper, it
 has to live in or below `claude-agent-sdk`, not in vibedev.
 
 ## Layout
 
 ```
-src/vibedev/        # the package (config, workspace, prompts, core, cli)
+src/vibedev/        # the package (config, workspace, roles, core, cli)
 tests/              # pytest suite, no network calls
 myapp.py            # example driver script (Haiku, ./vibedev-output)
 pyproject.toml      # hatchling build, src layout, console_scripts entry

@@ -13,7 +13,6 @@ import anyio
 from claude_agent_sdk import ClaudeAgentOptions, query
 
 from vibedev.config import Config, get_config
-from vibedev.prompts import ORCHESTRATOR_SYSTEM_PROMPT
 from vibedev.roles import (
     BUSINESS_ANALYST_PROMPT,
     DEVELOPER_PROMPT,
@@ -82,13 +81,10 @@ def prompt(
             file=sys.stderr,
             flush=True,
         )
-        if cfg["team"]:
-            parts = [
-                f"{role}({model or cfg['model']})" for role, model in cfg["team"]
-            ]
-            team_label = ", ".join(parts)
-        else:
-            team_label = "(none — single orchestrator)"
+        parts = [
+            f"{role}({model or cfg['model']})" for role, model in cfg["team"]
+        ]
+        team_label = ", ".join(parts)
         print(f"[vibedev] team: {team_label}", file=sys.stderr, flush=True)
         print(f"[vibedev] transcript: {log_path}", file=sys.stderr, flush=True)
         print(
@@ -149,10 +145,9 @@ async def _run(
                     conversation_logger,
                 )
             else:
-                options = _options_for_orchestrator(workspace, cfg)
-                label = "Fallback Manager" if cfg["team"] else "Solo Orchestrator"
+                options = _options_for_manager(workspace, cfg)
                 await _run_conversation_turn(
-                    label,
+                    "Fallback Manager",
                     user_prompt,
                     options,
                     logger,
@@ -164,20 +159,13 @@ async def _run(
             conversation_logger.write_footer()
 
 
-def _options_for_orchestrator(workspace: Path, cfg: Config) -> ClaudeAgentOptions:
-    if cfg["team"]:
-        return ClaudeAgentOptions(
-            cwd=str(workspace),
-            permission_mode=cfg["permission_mode"],
-            model=cfg["model"],
-            system_prompt=build_manager_prompt(cfg["team"], cfg["model"]),
-            agents=subagents_for(cfg["team"], cfg["model"]),
-        )
+def _options_for_manager(workspace: Path, cfg: Config) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         cwd=str(workspace),
         permission_mode=cfg["permission_mode"],
         model=cfg["model"],
-        system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+        system_prompt=build_manager_prompt(cfg["team"], cfg["model"]),
+        agents=subagents_for(cfg["team"], cfg["model"]),
     )
 
 
@@ -1158,11 +1146,8 @@ class _TranscriptLogger:
         fh.write(f"workspace: {workspace}\n")
         fh.write(f"model: {cfg['model']}  (main agent)\n")
         fh.write(f"permissions: {cfg['permission_mode']}\n")
-        if cfg["team"]:
-            parts = [f"{role}({model or cfg['model']})" for role, model in cfg["team"]]
-            fh.write(f"team: {', '.join(parts)}\n")
-        else:
-            fh.write("team: (none — single orchestrator)\n")
+        parts = [f"{role}({model or cfg['model']})" for role, model in cfg["team"]]
+        fh.write(f"team: {', '.join(parts)}\n")
         fh.write("prompt:\n")
         for line in user_prompt.splitlines() or [""]:
             fh.write(f"  {line}\n")
@@ -1263,11 +1248,8 @@ class _ConversationLogger:
         fh.write(f"- Workspace: `{workspace}`\n")
         fh.write(f"- Model: `{cfg['model']}`\n")
         fh.write(f"- Permissions: `{cfg['permission_mode']}`\n")
-        if cfg["team"]:
-            parts = [f"{role}({model or cfg['model']})" for role, model in cfg["team"]]
-            fh.write(f"- Team: `{', '.join(parts)}`\n")
-        else:
-            fh.write("- Team: `(none - single orchestrator)`\n")
+        parts = [f"{role}({model or cfg['model']})" for role, model in cfg["team"]]
+        fh.write(f"- Team: `{', '.join(parts)}`\n")
         fh.write(f"- Full transcript: `{transcript_log_path}`\n\n")
         fh.write("## User Prompt\n\n")
         self._write_fenced(user_prompt)
