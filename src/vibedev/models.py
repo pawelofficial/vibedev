@@ -19,3 +19,8 @@ class TestReport(BaseModel):
 class DevResult(BaseModel):
     status: str
     file_written: str
+
+
+class ChallengeReport(BaseModel):
+    approved: bool  # True when the spec needs no further changes
+    remarks: list[str]  # actionable critiques the lead developer must address

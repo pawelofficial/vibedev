@@ -1,7 +1,87 @@
 from vibedev import config
-from vibedev.agents import developer, lead_developer, tester
-from vibedev.config import MAX_ITERATIONS
+from vibedev.agents import (
+    developer,
+    developer_challenger,
+    lead_developer,
+    lead_developer_challenger,
+    tester,
+)
+from vibedev.config import MAX_CHALLENGE_ITERATIONS, MAX_ITERATIONS
+from vibedev.models import DesignSpec, TestReport
 from vibedev.utils.logging import PipelineLogger
+
+
+async def design_with_challenge(
+    user_prompt: str,
+    log: PipelineLogger,
+    feedback: TestReport | None = None,
+) -> DesignSpec:
+    """Draft a spec (optionally addressing tester feedback), then let a reviewer
+    challenge it until approved."""
+    challenge_remarks = ""
+    for attempt in range(1, MAX_CHALLENGE_ITERATIONS + 1):
+        specs = await lead_developer(
+            user_prompt, feedback=feedback, challenge_remarks=challenge_remarks
+        )
+        log.info(
+            f"\n📋 Spec (attempt {attempt}): {specs.class_name} — "
+            f"{len(specs.attributes)} attrs, {len(specs.methods)} methods"
+        )
+        log.log(
+            "spec_ready",
+            attempt=attempt,
+            class_name=specs.class_name,
+            attributes=len(specs.attributes),
+            methods=len(specs.methods),
+        )
+
+        # No point challenging on the last attempt — we won't revise again.
+        if attempt == MAX_CHALLENGE_ITERATIONS:
+            break
+
+        challenge = await lead_developer_challenger(specs, user_prompt)
+        log.log(
+            "spec_challenged",
+            attempt=attempt,
+            approved=challenge.approved,
+            remarks=len(challenge.remarks),
+        )
+        if challenge.approved:
+            log.info(f"\n✅ Challenger approved the spec on attempt {attempt}.")
+            break
+
+        challenge_remarks = "\n".join(f"- {remark}" for remark in challenge.remarks)
+        log.info(f"\n🔁 Challenger requested {len(challenge.remarks)} change(s); revising spec.")
+
+    return specs
+
+
+async def develop_with_challenge(specs: DesignSpec, log: PipelineLogger) -> None:
+    """Implement ``specs``, then let a reviewer challenge the code until approved."""
+    challenge_remarks = ""
+    for attempt in range(1, MAX_CHALLENGE_ITERATIONS + 1):
+        await developer(specs, challenge_remarks=challenge_remarks)
+        log.log("dev_done", attempt=attempt, class_name=specs.class_name)
+
+        # No point challenging on the last attempt — we won't revise again.
+        if attempt == MAX_CHALLENGE_ITERATIONS:
+            break
+
+        challenge = await developer_challenger(specs)
+        log.log(
+            "dev_challenged",
+            attempt=attempt,
+            approved=challenge.approved,
+            remarks=len(challenge.remarks),
+        )
+        if challenge.approved:
+            log.info(f"\n✅ Code review approved the implementation on attempt {attempt}.")
+            break
+
+        challenge_remarks = "\n".join(f"- {remark}" for remark in challenge.remarks)
+        log.info(
+            f"\n🔁 Code review requested {len(challenge.remarks)} change(s); revising implementation."
+        )
 
 
 async def run_pipeline(user_prompt: str) -> None:
@@ -12,21 +92,8 @@ async def run_pipeline(user_prompt: str) -> None:
         log.info(f"\n📁 Output directory: {output_dir}")
         log.log("output_dir", path=str(output_dir))
 
-        specs = await lead_developer(user_prompt)
-        spec_msg = (
-            f"\n📋 Spec: {specs.class_name} — "
-            f"{len(specs.attributes)} attrs, {len(specs.methods)} methods"
-        )
-        log.info(spec_msg)
-        log.log(
-            "spec_ready",
-            class_name=specs.class_name,
-            attributes=len(specs.attributes),
-            methods=len(specs.methods),
-        )
-        
-        
-        await developer(specs)
+        specs = await design_with_challenge(user_prompt, log)
+        await develop_with_challenge(specs, log)
 
         for iteration in range(1, MAX_ITERATIONS + 1):
             log.log("test_iteration_start", iteration=iteration)
@@ -50,15 +117,9 @@ async def run_pipeline(user_prompt: str) -> None:
                 log.log("pipeline_stopped", reason="max_iterations", iteration=iteration)
                 break
 
-            specs = await lead_developer(user_prompt, feedback=report)
-            log.log(
-                "spec_revised",
-                iteration=iteration,
-                class_name=specs.class_name,
-                attributes=len(specs.attributes),
-                methods=len(specs.methods),
-            )
-            await developer(specs)
+            log.log("spec_revised", iteration=iteration)
+            specs = await design_with_challenge(user_prompt, log, feedback=report)
+            await develop_with_challenge(specs, log)
     finally:
         log.log("pipeline_end")
         log.flush()
