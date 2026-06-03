@@ -29,6 +29,28 @@ PROJECT_SHAPE_HINT = (
     "Even for a single class, wrap it: one file with one component."
 )
 
+LEAD_DEVELOPER_EVOLVE_SYSTEM = (
+    "You are a senior software architect EXTENDING an existing multi-file Python project "
+    "with a new feature. You are given the current project spec, and the code for it is on "
+    "disk in your working directory — Read the files you intend to touch so your changes "
+    "match what is really there. "
+    "Add the requested feature with MINIMAL disruption: prefer extending existing files and "
+    "components; add new files only when genuinely needed; do not redesign what already "
+    "works. "
+    "Return the FULL updated project spec (every file, including untouched ones, so the spec "
+    "stays complete). For EVERY file set 'change' to exactly one of: 'new' (file does not "
+    "exist yet), 'modified' (existing file you are changing), 'unchanged' (existing file you "
+    "are NOT changing). Keep dependencies acyclic. Do NOT write code. Respond with structured "
+    "JSON only. If given tester feedback or challenge remarks, revise to address every point."
+)
+
+# Like PROJECT_SHAPE_HINT but reminds the evolve step to tag every file's change kind.
+EVOLVE_SHAPE_HINT = (
+    PROJECT_SHAPE_HINT
+    + "\nAdditionally, set each file's 'change' to 'new', 'modified', or 'unchanged'. "
+    "Include unchanged files unchanged so the returned spec describes the whole project."
+)
+
 LEAD_DEVELOPER_CHALLENGER_SYSTEM = (
     "You are a senior architect reviewing another architect's multi-file project spec. "
     "Critique it against the user's request: missing or unnecessary files/components, "
@@ -109,6 +131,39 @@ REVIEWER CHALLENGE (revise the spec to address every remark):
     )
 
 
+def lead_developer_evolve_prompt(
+    feature_prompt: str,
+    current: ProjectSpec,
+    feedback: TestReport | None = None,
+    challenge_remarks: str = "",
+) -> str:
+    spec_json = current.model_dump_json(indent=2)
+    feedback_section = ""
+    if feedback:
+        feedback_section = f"""
+
+TESTER FEEDBACK (address all of this):
+- Summary: {feedback.summary}
+- Missing features: {', '.join(feedback.missing_features)}
+- Failed tests: {json.dumps(feedback.failed_tests, indent=2)}
+"""
+    challenge_section = ""
+    if challenge_remarks:
+        challenge_section = f"""
+
+REVIEWER CHALLENGE (revise the spec to address every remark):
+{challenge_remarks}
+"""
+    return (
+        f"Existing project: {current.project_name} — {current.description}\n"
+        f"Its code is on disk in the working directory; Read the files you will change.\n\n"
+        f"Current project spec (JSON):\n{spec_json}\n\n"
+        f"NEW FEATURE TO ADD:\n{feature_prompt.rstrip('.')}."
+        f"{feedback_section}{challenge_section}\n\n"
+        f"{EVOLVE_SHAPE_HINT}"
+    )
+
+
 def lead_developer_challenger_prompt(project: ProjectSpec, user_prompt: str) -> str:
     spec_json = project.model_dump_json(indent=2)
     return (
@@ -118,10 +173,19 @@ def lead_developer_challenger_prompt(project: ProjectSpec, user_prompt: str) -> 
     )
 
 
-def developer_prompt(file: FileSpec, project: ProjectSpec, challenge_remarks: str = "") -> str:
+def developer_prompt(
+    file: FileSpec, project: ProjectSpec, challenge_remarks: str = "", modify: bool = False
+) -> str:
     file_json = file.model_dump_json(indent=2)
     deps = ", ".join(file.depends_on) if file.depends_on else "none"
     all_paths = ", ".join(f.path for f in project.files)
+    modify_section = ""
+    if modify:
+        modify_section = (
+            f"\n\nThis file ALREADY EXISTS on disk. Read it first, then make TARGETED EDITS to "
+            f"add only the new behavior the spec describes. Preserve the existing working code; "
+            f"do not rewrite the file from scratch."
+        )
     challenge_section = ""
     if challenge_remarks:
         challenge_section = f"""
@@ -134,7 +198,7 @@ CODE REVIEW (revise {file.path} to address every remark):
         f"All files in the project: {all_paths}\n\n"
         f"Implement the file {file.path}.\n"
         f"It depends on (read these for matching imports/signatures): {deps}\n\n"
-        f"File spec (JSON):\n{file_json}{challenge_section}"
+        f"File spec (JSON):\n{file_json}{modify_section}{challenge_section}"
     )
 
 
@@ -147,15 +211,31 @@ def developer_challenger_prompt(file: FileSpec) -> str:
     )
 
 
-def tester_prompt(project: ProjectSpec) -> str:
-    lines = []
-    for f in project.files:
+def tester_prompt(project: ProjectSpec, files_to_test: list[FileSpec] | None = None) -> str:
+    """Build the tester prompt. ``files_to_test=None`` tests the whole project; a subset
+    scopes testing to just those files (their tests are run, the rest read for context)."""
+    targets = project.files if files_to_test is None else files_to_test
+
+    def _line(f: FileSpec) -> str:
         names = ", ".join(c.name for c in f.components) or "(no components)"
-        lines.append(f"- {f.path}: {names} -> tests in {test_filename(f.path)}")
-    files_block = "\n".join(lines)
-    return (
-        f"Project: {project.project_name} — {project.description}\n\n"
-        f"Read these files and write pytest tests covering every component:\n"
-        f"{files_block}\n\n"
-        f"Run the whole test suite with pytest and report the results."
-    )
+        return f"- {f.path}: {names} -> tests in {test_filename(f.path)}"
+
+    files_block = "\n".join(_line(f) for f in targets)
+
+    if files_to_test is None:
+        body = (
+            f"Read these files and write pytest tests covering every component:\n"
+            f"{files_block}\n\n"
+            f"Run the whole test suite with pytest and report the results."
+        )
+    else:
+        all_paths = ", ".join(f.path for f in project.files)
+        test_paths = " ".join(test_filename(f.path) for f in targets)
+        body = (
+            f"The full project contains: {all_paths}\n\n"
+            f"Only these files changed and need testing — write or update pytest tests "
+            f"covering every component in them:\n{files_block}\n\n"
+            f"Run pytest on just those test files ({test_paths}) and report the results. "
+            f"Read the other project files as needed for imports and signatures."
+        )
+    return f"Project: {project.project_name} — {project.description}\n\n{body}"

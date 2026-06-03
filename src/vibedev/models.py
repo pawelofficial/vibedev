@@ -19,6 +19,10 @@ class FileSpec(BaseModel):
     description: str
     components: list[ComponentSpec]
     depends_on: list[str]  # paths of other FileSpecs this file imports from
+    # Only set when extending an existing project (continue_development): "new" (build
+    # fresh), "modified" (edit the file already on disk), or "unchanged" (leave as-is —
+    # skipped by the incremental build). None on a from-scratch run, where all files build.
+    change: str | None = None
 
 
 class ProjectSpec(BaseModel):

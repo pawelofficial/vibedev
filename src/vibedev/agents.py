@@ -3,11 +3,13 @@ from vibedev.prompt_templates import (
     DEVELOPER_CHALLENGER_SYSTEM,
     DEVELOPER_SYSTEM,
     LEAD_DEVELOPER_CHALLENGER_SYSTEM,
+    LEAD_DEVELOPER_EVOLVE_SYSTEM,
     LEAD_DEVELOPER_SYSTEM,
     TESTER_SYSTEM,
     developer_challenger_prompt,
     developer_prompt,
     lead_developer_challenger_prompt,
+    lead_developer_evolve_prompt,
     lead_developer_prompt,
     tester_prompt,
 )
@@ -28,6 +30,21 @@ async def lead_developer(
     return ProjectSpec.model_validate(raw)
 
 
+async def lead_developer_evolve(
+    feature_prompt: str,
+    current: ProjectSpec,
+    feedback: TestReport | None = None,
+    challenge_remarks: str = "",
+) -> ProjectSpec:
+    raw = await run_agent(
+        role="Lead Developer",
+        system_prompt=LEAD_DEVELOPER_EVOLVE_SYSTEM,
+        prompt=lead_developer_evolve_prompt(feature_prompt, current, feedback, challenge_remarks),
+        output_schema=ProjectSpec,
+    )
+    return ProjectSpec.model_validate(raw)
+
+
 async def lead_developer_challenger(project: ProjectSpec, user_prompt: str) -> ChallengeReport:
     raw = await run_agent(
         role="Lead Developer Challenger",
@@ -38,11 +55,13 @@ async def lead_developer_challenger(project: ProjectSpec, user_prompt: str) -> C
     return ChallengeReport.model_validate(raw)
 
 
-async def developer(file: FileSpec, project: ProjectSpec, challenge_remarks: str = "") -> None:
+async def developer(
+    file: FileSpec, project: ProjectSpec, challenge_remarks: str = "", modify: bool = False
+) -> None:
     await run_agent(
         role="Software Developer",
         system_prompt=DEVELOPER_SYSTEM,
-        prompt=developer_prompt(file, project, challenge_remarks),
+        prompt=developer_prompt(file, project, challenge_remarks, modify=modify),
         output_schema=DevResult,
     )
 
@@ -57,11 +76,13 @@ async def developer_challenger(file: FileSpec) -> ChallengeReport:
     return ChallengeReport.model_validate(raw)
 
 
-async def tester(project: ProjectSpec) -> TestReport:
+async def tester(
+    project: ProjectSpec, files_to_test: list[FileSpec] | None = None
+) -> TestReport:
     raw = await run_agent(
         role="Tester",
         system_prompt=TESTER_SYSTEM,
-        prompt=tester_prompt(project),
+        prompt=tester_prompt(project, files_to_test),
         output_schema=TestReport,
     )
     return TestReport.model_validate(raw)
