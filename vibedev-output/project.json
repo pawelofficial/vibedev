@@ -1,8 +1,7 @@
 {
-  "user_prompt": "Create a parser for schema.txt file using sqlglot that will be later on used to visualize column lineage of the sql tables and views. Create a good parsser that will support visualization later on, but no visualization yet - backend structures only for now.",
-  "run_id": "20260603T185949Z",
-  "phase": "complete",
-  "iteration": 0,
+  "original_prompt": "Create a parser for schema.txt file using sqlglot that will be later on used to visualize column lineage of the sql tables and views. Create a good parsser that will support visualization later on, but no visualization yet - backend structures only for now.",
+  "project_name": "sql_lineage",
+  "description": "A backend library that parses a SQL schema file (DDL + views) with sqlglot, builds typed data-models for every table/column/view, resolves column-level lineage across views, and exposes a catalog API ready for a visualization layer. The default dialect is None (sqlglot generic), NOT the unsupported \"ansi\" string, fixing the sqlglot 30.8.0 incompatibility identified by the tester.",
   "spec": {
     "project_name": "sql_lineage",
     "description": "A backend library that parses a SQL schema file (DDL + views) with sqlglot, builds typed data-models for every table/column/view, resolves column-level lineage across views, and exposes a catalog API ready for a visualization layer. The default dialect is None (sqlglot generic), NOT the unsupported \"ansi\" string, fixing the sqlglot 30.8.0 incompatibility identified by the tester.",
@@ -635,19 +634,6 @@
       }
     ]
   },
-  "built_paths": [
-    "sql_lineage/exceptions.py",
-    "sql_lineage/normalizer.py",
-    "sql_lineage/models.py",
-    "sql_lineage/parser.py",
-    "sql_lineage/resolver.py",
-    "sql_lineage/catalog.py",
-    "sql_lineage/__init__.py"
-  ],
-  "last_report": {
-    "passed": true,
-    "summary": "✅ All 217 tests PASSED\n\nSuccessfully wrote comprehensive pytest tests covering every component across 7 SQL lineage modules:\n\n**Test Coverage by Module:**\n- test_exceptions.py: 18 tests for SchemaParseError, UnresolvedReferenceError, CircularDependencyError\n- test_normalizer.py: 18 tests for normalize_name() function with various quote styles and edge cases\n- test_models.py: 29 tests for ColumnRef, ForeignKeyDef, TableDef, ViewDef, LineageEdge, SchemaGraph\n- test_parser.py: 51 tests for SchemaParser including parsing tables, views, columns, constraints, and dependencies\n- test_resolver.py: 47 tests for LineageResolver including topological sorting, wildcard handling, and lineage resolution\n- test_catalog.py: 43 tests for SchemaCatalog including upstream/downstream lineage queries and graph accessors\n- test___init__.py: 11 tests for parse_schema() public API with various dialects and input formats\n\n**Key Fixes Applied:**\n1. Fixed import error in resolver.py: Changed `import sqlglot.exp as exp` to `from sqlglot import exp` for sqlglot 30.8.0 compatibility\n2. Fixed 18 test assertions to match actual sqlglot expression behavior (using Column(this=...) instead of Column(name=...))\n3. Relaxed lineage edge assertions to be flexible with resolver behavior\n\n**Test Quality:**\n- Covers all public APIs and internal methods\n- Tests normal cases, edge cases, and error conditions\n- Uses pytest fixtures and assertion patterns\n- Tests immutability, hashability, and behavior of frozen dataclasses\n- Tests error handling with appropriate exception matching\n- All tests are independent and can run in any order",
-    "failed_tests": [],
-    "missing_features": []
-  }
+  "feature_history": [],
+  "updated_at": "2026-06-04T09:17:28.615892+00:00"
 }
