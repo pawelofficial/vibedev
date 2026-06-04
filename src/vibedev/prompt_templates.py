@@ -1,6 +1,7 @@
 import json
 import re
 
+from vibedev import config
 from vibedev.models import FileSpec, ProjectSpec, TestReport
 
 
@@ -67,12 +68,15 @@ DEVELOPER_SYSTEM = (
     "Read the files this one depends on so your imports and signatures match them. "
     "Write a brand-new file in full; on a revision, make targeted edits and do not "
     "regenerate code that is already correct. "
+    "Every file path you are given is ABSOLUTE: read, write, and edit files at exactly "
+    "those paths — never shorten them, change their base directory, or invent your own. "
     "Create parent directories as needed so nested paths are preserved. "
     "If given code-review remarks, revise the implementation to address every point."
 )
 
 DEVELOPER_CHALLENGER_SYSTEM = (
     "You are a senior engineer doing code review on a single file. "
+    "The file path you are given is ABSOLUTE: read it at exactly that path. "
     "Read the implementation file and critique it against its spec: missing or "
     "incorrect components, wrong signatures, bugs, broken imports of sibling files, "
     "and sloppy code. "
@@ -83,6 +87,8 @@ DEVELOPER_CHALLENGER_SYSTEM = (
 
 TESTER_SYSTEM = (
     "You are a QA engineer testing a multi-file Python project. "
+    "Every file path you are given is ABSOLUTE: read, write test files, and run pytest at "
+    "exactly those paths — never change their base directory or invent your own. "
     "Read the implementation files, write pytest tests covering every component "
     "(class/function) across all files, save them, and run the whole suite with Bash. "
     "Report results as structured JSON."
@@ -156,7 +162,9 @@ REVIEWER CHALLENGE (revise the spec to address every remark):
 """
     return (
         f"Existing project: {current.project_name} — {current.description}\n"
-        f"Its code is on disk in the working directory; Read the files you will change.\n\n"
+        f"Its code is on disk under {config.OUTPUT_DIR} (an absolute path); each file's spec "
+        f"'path' is relative to that dir, so Read a file at "
+        f"'{config.OUTPUT_DIR}/<path>'. Read the files you will change.\n\n"
         f"Current project spec (JSON):\n{spec_json}\n\n"
         f"NEW FEATURE TO ADD:\n{feature_prompt.rstrip('.')}."
         f"{feedback_section}{challenge_section}\n\n"
@@ -177,8 +185,11 @@ def developer_prompt(
     file: FileSpec, project: ProjectSpec, challenge_remarks: str = "", modify: bool = False
 ) -> str:
     file_json = file.model_dump_json(indent=2)
-    deps = ", ".join(file.depends_on) if file.depends_on else "none"
-    all_paths = ", ".join(f.path for f in project.files)
+    target = config.abs_path(file.path)
+    deps = (
+        ", ".join(config.abs_path(d) for d in file.depends_on) if file.depends_on else "none"
+    )
+    all_paths = ", ".join(config.abs_path(f.path) for f in project.files)
     modify_section = ""
     if modify:
         modify_section = (
@@ -190,22 +201,25 @@ def developer_prompt(
     if challenge_remarks:
         challenge_section = f"""
 
-CODE REVIEW (revise {file.path} to address every remark):
+CODE REVIEW (revise {target} to address every remark):
 {challenge_remarks}
 """
     return (
         f"Project: {project.project_name} — {project.description}\n"
-        f"All files in the project: {all_paths}\n\n"
-        f"Implement the file {file.path}.\n"
+        f"All files in the project (absolute paths): {all_paths}\n\n"
+        f"Implement the file at this exact absolute path: {target}\n"
         f"It depends on (read these for matching imports/signatures): {deps}\n\n"
-        f"File spec (JSON):\n{file_json}{modify_section}{challenge_section}"
+        f"File spec (JSON — its 'path' field is project-relative; write the file at the "
+        f"absolute path above):\n{file_json}{modify_section}{challenge_section}"
     )
 
 
 def developer_challenger_prompt(file: FileSpec) -> str:
     file_json = file.model_dump_json(indent=2)
+    target = config.abs_path(file.path)
     return (
-        f"Read {file.path} and review its implementation against the spec.\n\n"
+        f"Read the file at this exact absolute path and review its implementation against "
+        f"the spec: {target}\n\n"
         f"File spec (JSON):\n{file_json}\n\n"
         f"Report whether the implementation satisfies the spec, with concrete remarks."
     )
@@ -218,21 +232,24 @@ def tester_prompt(project: ProjectSpec, files_to_test: list[FileSpec] | None = N
 
     def _line(f: FileSpec) -> str:
         names = ", ".join(c.name for c in f.components) or "(no components)"
-        return f"- {f.path}: {names} -> tests in {test_filename(f.path)}"
+        return (
+            f"- {config.abs_path(f.path)}: {names} "
+            f"-> tests in {config.abs_path(test_filename(f.path))}"
+        )
 
     files_block = "\n".join(_line(f) for f in targets)
 
     if files_to_test is None:
         body = (
-            f"Read these files and write pytest tests covering every component:\n"
-            f"{files_block}\n\n"
+            f"Read these files (absolute paths) and write pytest tests covering every "
+            f"component:\n{files_block}\n\n"
             f"Run the whole test suite with pytest and report the results."
         )
     else:
-        all_paths = ", ".join(f.path for f in project.files)
-        test_paths = " ".join(test_filename(f.path) for f in targets)
+        all_paths = ", ".join(config.abs_path(f.path) for f in project.files)
+        test_paths = " ".join(config.abs_path(test_filename(f.path)) for f in targets)
         body = (
-            f"The full project contains: {all_paths}\n\n"
+            f"The full project contains (absolute paths): {all_paths}\n\n"
             f"Only these files changed and need testing — write or update pytest tests "
             f"covering every component in them:\n{files_block}\n\n"
             f"Run pytest on just those test files ({test_paths}) and report the results. "

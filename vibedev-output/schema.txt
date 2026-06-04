@@ -1,0 +1,667 @@
+DROP VIEW IF EXISTS rpt_executive_revenue_dashboard;
+DROP VIEW IF EXISTS mart_segment_health_snapshot;
+DROP VIEW IF EXISTS rpt_customer_growth_cohorts;
+DROP VIEW IF EXISTS mart_customer_ltv_segments;
+DROP VIEW IF EXISTS fct_customer_revenue_daily;
+DROP VIEW IF EXISTS int_customer_order_metrics;
+DROP VIEW IF EXISTS stg_line_items_priced;
+DROP VIEW IF EXISTS stg_orders_enriched;
+
+DROP TABLE IF EXISTS raw_payments;
+DROP TABLE IF EXISTS raw_order_items;
+DROP TABLE IF EXISTS raw_orders;
+DROP TABLE IF EXISTS raw_products;
+DROP TABLE IF EXISTS raw_customers;
+
+CREATE TABLE raw_customers (
+    customer_id          BIGINT PRIMARY KEY,
+    external_customer_id TEXT NOT NULL,
+    email                TEXT NOT NULL,
+    first_name           TEXT,
+    last_name            TEXT,
+    signup_ts            TIMESTAMPTZ NOT NULL,
+    acquisition_channel  TEXT,
+    country_code         TEXT,
+    marketing_opt_in     BOOLEAN DEFAULT FALSE,
+    customer_status      TEXT NOT NULL
+);
+
+CREATE TABLE raw_orders (
+    order_id          BIGINT PRIMARY KEY,
+    customer_id       BIGINT NOT NULL REFERENCES raw_customers(customer_id),
+    order_number      TEXT NOT NULL,
+    order_ts          TIMESTAMPTZ NOT NULL,
+    order_status      TEXT NOT NULL,
+    currency          TEXT NOT NULL,
+    subtotal_amount   NUMERIC(12, 2) NOT NULL,
+    shipping_amount   NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    tax_amount        NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    discount_amount   NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    coupon_code       TEXT,
+    sales_channel     TEXT NOT NULL
+);
+
+CREATE TABLE raw_order_items (
+    order_item_id      BIGINT PRIMARY KEY,
+    order_id           BIGINT NOT NULL REFERENCES raw_orders(order_id),
+    product_id         BIGINT NOT NULL,
+    sku                TEXT NOT NULL,
+    quantity           INTEGER NOT NULL,
+    unit_price_amount  NUMERIC(12, 2) NOT NULL,
+    item_discount_amt  NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    item_tax_amount    NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    fulfillment_status TEXT NOT NULL
+);
+
+CREATE TABLE raw_products (
+    product_id        BIGINT PRIMARY KEY,
+    sku               TEXT NOT NULL,
+    product_name      TEXT NOT NULL,
+    category          TEXT,
+    subcategory       TEXT,
+    brand             TEXT,
+    standard_cost_amt NUMERIC(12, 2),
+    is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+    launched_date     DATE
+);
+
+CREATE TABLE raw_payments (
+    payment_id       BIGINT PRIMARY KEY,
+    order_id         BIGINT NOT NULL REFERENCES raw_orders(order_id),
+    payment_ts       TIMESTAMPTZ NOT NULL,
+    payment_method   TEXT NOT NULL,
+    payment_status   TEXT NOT NULL,
+    payment_type     TEXT NOT NULL, -- charge, refund, adjustment
+    amount           NUMERIC(12, 2) NOT NULL,
+    processor_fee    NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    refunded_amount  NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    gateway_txn_id   TEXT
+);
+
+-- View 1: order-level staging model.
+-- Tests lineage through CTE aggregation, CASE normalization, casts, joins,
+-- boolean derivations, COALESCE, and arithmetic.
+CREATE VIEW stg_orders_enriched AS
+WITH payment_rollup AS (
+    SELECT
+        p.order_id,
+        MIN(p.payment_ts) FILTER (WHERE p.payment_type = 'charge') AS first_charge_ts,
+        MAX(p.payment_ts) AS last_payment_event_ts,
+        SUM(CASE WHEN p.payment_type = 'charge' THEN p.amount ELSE 0 END) AS charged_amount,
+        SUM(CASE WHEN p.payment_type = 'refund' THEN p.amount ELSE 0 END) AS refund_amount,
+        SUM(p.processor_fee) AS total_processor_fee,
+        COUNT(*) FILTER (WHERE p.payment_status = 'failed') AS failed_payment_events
+    FROM raw_payments p
+    GROUP BY p.order_id
+),
+item_rollup AS (
+    SELECT
+        oi.order_id,
+        COUNT(*) AS item_row_count,
+        SUM(oi.quantity) AS total_units,
+        SUM(oi.quantity * oi.unit_price_amount) AS item_gross_amount,
+        SUM(oi.item_discount_amt) AS item_discount_amount,
+        SUM(oi.item_tax_amount) AS item_tax_amount
+    FROM raw_order_items oi
+    GROUP BY oi.order_id
+)
+SELECT
+    o.order_id::TEXT AS order_key,
+    o.order_id,
+    o.customer_id,
+    o.order_number,
+    o.order_ts,
+    o.order_ts::DATE AS order_date,
+    DATE_TRUNC('month', o.order_ts)::DATE AS order_month,
+    LOWER(TRIM(o.order_status)) AS raw_order_status_normalized,
+    CASE
+        WHEN LOWER(o.order_status) IN ('paid', 'complete', 'completed', 'shipped') THEN 'completed'
+        WHEN LOWER(o.order_status) IN ('cancelled', 'canceled', 'void') THEN 'cancelled'
+        WHEN LOWER(o.order_status) IN ('returned', 'refunded') THEN 'returned'
+        ELSE 'open'
+    END AS order_status_bucket,
+    o.currency,
+    COALESCE(o.subtotal_amount, 0)
+        + COALESCE(o.shipping_amount, 0)
+        + COALESCE(o.tax_amount, 0)
+        - COALESCE(o.discount_amount, 0) AS order_total_amount,
+    COALESCE(ir.item_row_count, 0) AS item_row_count,
+    COALESCE(ir.total_units, 0) AS total_units,
+    COALESCE(ir.item_gross_amount, 0) AS item_gross_amount,
+    COALESCE(ir.item_discount_amount, 0) AS item_discount_amount,
+    COALESCE(pr.charged_amount, 0) AS charged_amount,
+    COALESCE(pr.refund_amount, 0) AS refund_amount,
+    COALESCE(pr.total_processor_fee, 0) AS total_processor_fee,
+    COALESCE(pr.charged_amount, 0) - COALESCE(pr.refund_amount, 0) AS net_collected_amount,
+    pr.first_charge_ts,
+    pr.last_payment_event_ts,
+    COALESCE(pr.failed_payment_events, 0) AS failed_payment_events,
+    COALESCE(pr.charged_amount, 0) >= (
+        COALESCE(o.subtotal_amount, 0)
+        + COALESCE(o.shipping_amount, 0)
+        + COALESCE(o.tax_amount, 0)
+        - COALESCE(o.discount_amount, 0)
+    ) AS is_fully_paid,
+    o.sales_channel,
+    NULLIF(UPPER(TRIM(o.coupon_code)), '') AS coupon_code_normalized
+FROM raw_orders o
+LEFT JOIN payment_rollup pr
+    ON pr.order_id = o.order_id
+LEFT JOIN item_rollup ir
+    ON ir.order_id = o.order_id;
+
+-- View 2: item-level staging model.
+-- Tests lineage through multi-table joins, product fallback keys, arithmetic,
+-- CASE expressions, concatenated category paths, and margin calculations.
+CREATE VIEW stg_line_items_priced AS
+SELECT
+    oi.order_item_id,
+    oi.order_id,
+    o.customer_id,
+    o.order_ts,
+    o.order_ts::DATE AS order_date,
+    oi.product_id,
+    COALESCE(p.sku, oi.sku) AS resolved_sku,
+    p.product_name,
+    COALESCE(p.category, 'uncategorized') AS category,
+    COALESCE(p.subcategory, 'unknown') AS subcategory,
+    COALESCE(p.category, 'uncategorized') || ' > ' || COALESCE(p.subcategory, 'unknown') AS category_path,
+    p.brand,
+    oi.quantity,
+    oi.unit_price_amount,
+    oi.item_discount_amt,
+    oi.item_tax_amount,
+    oi.quantity * oi.unit_price_amount AS gross_line_amount,
+    (oi.quantity * oi.unit_price_amount) - COALESCE(oi.item_discount_amt, 0) AS net_line_amount,
+    ((oi.quantity * oi.unit_price_amount) - COALESCE(oi.item_discount_amt, 0))
+        + COALESCE(oi.item_tax_amount, 0) AS net_line_amount_with_tax,
+    COALESCE(p.standard_cost_amt, 0) * oi.quantity AS estimated_line_cost,
+    ((oi.quantity * oi.unit_price_amount) - COALESCE(oi.item_discount_amt, 0))
+        - (COALESCE(p.standard_cost_amt, 0) * oi.quantity) AS estimated_line_margin,
+    CASE
+        WHEN oi.fulfillment_status IN ('shipped', 'delivered') THEN TRUE
+        ELSE FALSE
+    END AS is_fulfilled,
+    CASE
+        WHEN p.is_active IS FALSE THEN 'inactive_product'
+        WHEN p.launched_date > o.order_ts::DATE THEN 'prelaunch_sale'
+        ELSE 'normal'
+    END AS product_sale_flag
+FROM raw_order_items oi
+JOIN raw_orders o
+    ON o.order_id = oi.order_id
+LEFT JOIN raw_products p
+    ON p.product_id = oi.product_id;
+
+-- View 3: customer-level intermediate model.
+-- Tests lineage through joins to upstream views, aggregate metrics, filtered
+-- aggregates, MIN/MAX, ratios with NULLIF, and customer dimension enrichment.
+CREATE VIEW int_customer_order_metrics AS
+WITH customer_orders AS (
+    SELECT
+        c.customer_id,
+        c.external_customer_id,
+        LOWER(c.email) AS email_normalized,
+        TRIM(COALESCE(c.first_name, '') || ' ' || COALESCE(c.last_name, '')) AS full_name,
+        c.signup_ts,
+        c.signup_ts::DATE AS signup_date,
+        COALESCE(c.acquisition_channel, 'unknown') AS acquisition_channel,
+        COALESCE(c.country_code, 'ZZ') AS country_code,
+        c.marketing_opt_in,
+        c.customer_status,
+        soe.order_id,
+        soe.order_date,
+        soe.order_month,
+        soe.order_status_bucket,
+        soe.order_total_amount,
+        soe.net_collected_amount,
+        soe.refund_amount,
+        soe.total_processor_fee,
+        soe.total_units,
+        soe.sales_channel,
+        soe.coupon_code_normalized
+    FROM raw_customers c
+    LEFT JOIN stg_orders_enriched soe
+        ON soe.customer_id = c.customer_id
+)
+SELECT
+    customer_id,
+    external_customer_id,
+    email_normalized,
+    full_name,
+    signup_date,
+    acquisition_channel,
+    country_code,
+    marketing_opt_in,
+    customer_status,
+    MIN(order_date) AS first_order_date,
+    MAX(order_date) AS last_order_date,
+    COUNT(order_id) AS lifetime_order_count,
+    COUNT(order_id) FILTER (WHERE order_status_bucket = 'completed') AS completed_order_count,
+    COUNT(order_id) FILTER (WHERE order_status_bucket = 'returned') AS returned_order_count,
+    SUM(COALESCE(order_total_amount, 0)) AS lifetime_order_total_amount,
+    SUM(COALESCE(net_collected_amount, 0)) AS lifetime_net_collected_amount,
+    SUM(COALESCE(refund_amount, 0)) AS lifetime_refund_amount,
+    SUM(COALESCE(total_processor_fee, 0)) AS lifetime_processor_fee_amount,
+    SUM(COALESCE(total_units, 0)) AS lifetime_units,
+    SUM(COALESCE(net_collected_amount, 0))
+        / NULLIF(COUNT(order_id) FILTER (WHERE order_status_bucket = 'completed'), 0) AS avg_completed_order_value,
+    MAX(CASE WHEN coupon_code_normalized IS NOT NULL THEN 1 ELSE 0 END)::BOOLEAN AS has_used_coupon,
+    MAX(CASE WHEN sales_channel = 'marketplace' THEN 1 ELSE 0 END)::BOOLEAN AS has_marketplace_order
+FROM customer_orders
+GROUP BY
+    customer_id,
+    external_customer_id,
+    email_normalized,
+    full_name,
+    signup_date,
+    acquisition_channel,
+    country_code,
+    marketing_opt_in,
+    customer_status;
+
+-- View 4: daily revenue fact.
+-- Tests lineage through UNION ALL, sign inversion for refunds/costs, event
+-- typing, grouping by derived dates, and dependence on two upstream views.
+CREATE VIEW fct_customer_revenue_daily AS
+WITH line_revenue_events AS (
+    SELECT
+        slip.customer_id,
+        slip.order_id,
+        slip.order_date AS revenue_date,
+        'item_revenue' AS revenue_event_type,
+        SUM(slip.net_line_amount) AS revenue_amount,
+        SUM(slip.estimated_line_cost) * -1 AS cost_amount,
+        SUM(slip.estimated_line_margin) AS margin_amount,
+        COUNT(DISTINCT slip.product_id) AS distinct_products
+    FROM stg_line_items_priced slip
+    GROUP BY
+        slip.customer_id,
+        slip.order_id,
+        slip.order_date
+),
+refund_events AS (
+    SELECT
+        soe.customer_id,
+        soe.order_id,
+        COALESCE(soe.last_payment_event_ts::DATE, soe.order_date) AS revenue_date,
+        'refund' AS revenue_event_type,
+        SUM(soe.refund_amount) * -1 AS revenue_amount,
+        0::NUMERIC(12, 2) AS cost_amount,
+        SUM(soe.refund_amount) * -1 AS margin_amount,
+        0 AS distinct_products
+    FROM stg_orders_enriched soe
+    WHERE soe.refund_amount > 0
+    GROUP BY
+        soe.customer_id,
+        soe.order_id,
+        COALESCE(soe.last_payment_event_ts::DATE, soe.order_date)
+),
+all_events AS (
+    SELECT * FROM line_revenue_events
+    UNION ALL
+    SELECT * FROM refund_events
+)
+SELECT
+    customer_id,
+    revenue_date,
+    DATE_TRUNC('month', revenue_date)::DATE AS revenue_month,
+    SUM(revenue_amount) AS daily_revenue_amount,
+    SUM(cost_amount) AS daily_cost_amount,
+    SUM(margin_amount) AS daily_margin_amount,
+    SUM(distinct_products) AS daily_distinct_products_touched,
+    COUNT(DISTINCT order_id) AS daily_order_count,
+    COUNT(*) FILTER (WHERE revenue_event_type = 'refund') AS refund_event_count,
+    SUM(revenue_amount) FILTER (WHERE revenue_event_type = 'refund') AS refund_revenue_amount,
+    SUM(revenue_amount) - ABS(SUM(cost_amount)) AS contribution_after_cost_amount
+FROM all_events
+GROUP BY
+    customer_id,
+    revenue_date,
+    DATE_TRUNC('month', revenue_date)::DATE;
+
+-- View 5: final mart for customer LTV and segmenting.
+-- Tests lineage through downstream view dependencies, aggregates over facts,
+-- window functions, NTILE, CASE segmentation, date arithmetic, and joins.
+CREATE VIEW mart_customer_ltv_segments AS
+WITH revenue_rollup AS (
+    SELECT
+        fcrd.customer_id,
+        MIN(fcrd.revenue_date) AS first_revenue_date,
+        MAX(fcrd.revenue_date) AS last_revenue_date,
+        SUM(fcrd.daily_revenue_amount) AS total_revenue_amount,
+        SUM(fcrd.daily_cost_amount) AS total_cost_amount,
+        SUM(fcrd.daily_margin_amount) AS total_margin_amount,
+        SUM(fcrd.daily_order_count) AS active_revenue_days_with_orders,
+        SUM(fcrd.refund_event_count) AS total_refund_events,
+        SUM(COALESCE(fcrd.refund_revenue_amount, 0)) AS total_refund_revenue_amount
+    FROM fct_customer_revenue_daily fcrd
+    GROUP BY fcrd.customer_id
+),
+scored_customers AS (
+    SELECT
+        icom.customer_id,
+        icom.external_customer_id,
+        icom.email_normalized,
+        icom.full_name,
+        icom.signup_date,
+        icom.acquisition_channel,
+        icom.country_code,
+        icom.marketing_opt_in,
+        icom.customer_status,
+        icom.first_order_date,
+        icom.last_order_date,
+        icom.lifetime_order_count,
+        icom.completed_order_count,
+        icom.returned_order_count,
+        icom.lifetime_net_collected_amount,
+        icom.avg_completed_order_value,
+        icom.has_used_coupon,
+        icom.has_marketplace_order,
+        COALESCE(rr.total_revenue_amount, 0) AS total_revenue_amount,
+        COALESCE(rr.total_cost_amount, 0) AS total_cost_amount,
+        COALESCE(rr.total_margin_amount, 0) AS total_margin_amount,
+        COALESCE(rr.total_refund_events, 0) AS total_refund_events,
+        COALESCE(rr.total_refund_revenue_amount, 0) AS total_refund_revenue_amount,
+        rr.first_revenue_date,
+        rr.last_revenue_date,
+        CASE
+            WHEN icom.first_order_date IS NULL THEN NULL
+            ELSE CURRENT_DATE - icom.first_order_date
+        END AS customer_age_days,
+        COALESCE(rr.total_revenue_amount, 0)
+            - COALESCE(icom.lifetime_processor_fee_amount, 0) AS ltv_after_fees_amount
+    FROM int_customer_order_metrics icom
+    LEFT JOIN revenue_rollup rr
+        ON rr.customer_id = icom.customer_id
+)
+SELECT
+    customer_id,
+    external_customer_id,
+    email_normalized,
+    full_name,
+    signup_date,
+    acquisition_channel,
+    country_code,
+    marketing_opt_in,
+    customer_status,
+    first_order_date,
+    last_order_date,
+    first_revenue_date,
+    last_revenue_date,
+    customer_age_days,
+    lifetime_order_count,
+    completed_order_count,
+    returned_order_count,
+    total_revenue_amount,
+    total_cost_amount,
+    total_margin_amount,
+    ltv_after_fees_amount,
+    avg_completed_order_value,
+    total_refund_events,
+    total_refund_revenue_amount,
+    has_used_coupon,
+    has_marketplace_order,
+    DENSE_RANK() OVER (ORDER BY total_revenue_amount DESC) AS revenue_rank,
+    NTILE(5) OVER (ORDER BY total_revenue_amount DESC) AS revenue_quintile,
+    CASE
+        WHEN lifetime_order_count = 0 THEN 'prospect'
+        WHEN total_revenue_amount >= 1000 AND completed_order_count >= 5 THEN 'vip'
+        WHEN total_refund_events >= 3 THEN 'refund_risk'
+        WHEN customer_age_days <= 30 THEN 'new_customer'
+        WHEN marketing_opt_in THEN 'marketable'
+        ELSE 'standard'
+    END AS customer_segment,
+    CASE
+        WHEN total_margin_amount < 0 THEN 'negative_margin'
+        WHEN total_margin_amount / NULLIF(total_revenue_amount, 0) >= 0.5 THEN 'high_margin'
+        WHEN total_margin_amount / NULLIF(total_revenue_amount, 0) >= 0.2 THEN 'medium_margin'
+        ELSE 'low_margin'
+    END AS margin_segment
+FROM scored_customers;
+
+-- View 6: cohort-level growth model on top of the customer LTV mart.
+-- Tests lineage through downstream mart dependencies, date bucketing, cohort
+-- aggregation, ratios, conditional aggregates, and window comparisons.
+CREATE VIEW rpt_customer_growth_cohorts AS
+WITH cohort_base AS (
+    SELECT
+        mcls.customer_id,
+        mcls.signup_date,
+        DATE_TRUNC('month', mcls.signup_date)::DATE AS signup_month,
+        mcls.acquisition_channel,
+        mcls.country_code,
+        mcls.customer_segment,
+        mcls.margin_segment,
+        mcls.completed_order_count,
+        mcls.returned_order_count,
+        mcls.total_revenue_amount,
+        mcls.total_margin_amount,
+        mcls.ltv_after_fees_amount,
+        mcls.customer_age_days,
+        CASE
+            WHEN mcls.first_order_date IS NULL THEN 'never_ordered'
+            WHEN mcls.first_order_date <= mcls.signup_date + INTERVAL '7 days' THEN 'converted_week_1'
+            WHEN mcls.first_order_date <= mcls.signup_date + INTERVAL '30 days' THEN 'converted_month_1'
+            ELSE 'converted_later'
+        END AS conversion_speed_bucket
+    FROM mart_customer_ltv_segments mcls
+),
+cohort_rollup AS (
+    SELECT
+        signup_month,
+        acquisition_channel,
+        country_code,
+        COUNT(*) AS cohort_customer_count,
+        COUNT(*) FILTER (WHERE conversion_speed_bucket <> 'never_ordered') AS converted_customer_count,
+        COUNT(*) FILTER (WHERE customer_segment = 'vip') AS vip_customer_count,
+        COUNT(*) FILTER (WHERE margin_segment = 'negative_margin') AS negative_margin_customer_count,
+        SUM(total_revenue_amount) AS cohort_revenue_amount,
+        SUM(total_margin_amount) AS cohort_margin_amount,
+        SUM(ltv_after_fees_amount) AS cohort_ltv_after_fees_amount,
+        SUM(completed_order_count) AS cohort_completed_orders,
+        SUM(returned_order_count) AS cohort_returned_orders,
+        AVG(customer_age_days) AS avg_customer_age_days
+    FROM cohort_base
+    GROUP BY
+        signup_month,
+        acquisition_channel,
+        country_code
+)
+SELECT
+    signup_month,
+    acquisition_channel,
+    country_code,
+    cohort_customer_count,
+    converted_customer_count,
+    converted_customer_count::NUMERIC / NULLIF(cohort_customer_count, 0) AS conversion_rate,
+    vip_customer_count::NUMERIC / NULLIF(cohort_customer_count, 0) AS vip_rate,
+    negative_margin_customer_count::NUMERIC / NULLIF(cohort_customer_count, 0) AS negative_margin_rate,
+    cohort_revenue_amount,
+    cohort_margin_amount,
+    cohort_ltv_after_fees_amount,
+    cohort_revenue_amount / NULLIF(cohort_customer_count, 0) AS revenue_per_customer,
+    cohort_ltv_after_fees_amount / NULLIF(cohort_customer_count, 0) AS ltv_after_fees_per_customer,
+    cohort_margin_amount / NULLIF(cohort_revenue_amount, 0) AS cohort_margin_rate,
+    cohort_completed_orders,
+    cohort_returned_orders,
+    cohort_returned_orders::NUMERIC / NULLIF(cohort_completed_orders, 0) AS cohort_return_rate,
+    avg_customer_age_days,
+    cohort_revenue_amount
+        - LAG(cohort_revenue_amount) OVER (
+            PARTITION BY acquisition_channel, country_code
+            ORDER BY signup_month
+        ) AS revenue_delta_vs_prior_cohort,
+    RANK() OVER (
+        PARTITION BY signup_month
+        ORDER BY cohort_ltv_after_fees_amount DESC
+    ) AS cohort_ltv_rank_in_month
+FROM cohort_rollup;
+
+-- View 7: segment health model combining final mart, daily facts, and cohort
+-- reporting. Tests lineage through multiple upstream views, overlapping column
+-- names, joined aggregates, CASE scoring, and weighted health formulas.
+CREATE VIEW mart_segment_health_snapshot AS
+WITH recent_revenue AS (
+    SELECT
+        fcrd.customer_id,
+        SUM(fcrd.daily_revenue_amount) FILTER (
+            WHERE fcrd.revenue_date >= CURRENT_DATE - INTERVAL '30 days'
+        ) AS revenue_30d_amount,
+        SUM(fcrd.daily_margin_amount) FILTER (
+            WHERE fcrd.revenue_date >= CURRENT_DATE - INTERVAL '30 days'
+        ) AS margin_30d_amount,
+        SUM(fcrd.daily_order_count) FILTER (
+            WHERE fcrd.revenue_date >= CURRENT_DATE - INTERVAL '30 days'
+        ) AS order_count_30d,
+        MAX(fcrd.revenue_date) AS most_recent_revenue_date
+    FROM fct_customer_revenue_daily fcrd
+    GROUP BY fcrd.customer_id
+),
+cohort_context AS (
+    SELECT
+        rgc.signup_month,
+        rgc.acquisition_channel,
+        rgc.country_code,
+        rgc.conversion_rate,
+        rgc.vip_rate,
+        rgc.negative_margin_rate,
+        rgc.revenue_per_customer,
+        rgc.cohort_margin_rate,
+        rgc.cohort_ltv_rank_in_month
+    FROM rpt_customer_growth_cohorts rgc
+)
+SELECT
+    mcls.customer_id,
+    mcls.external_customer_id,
+    mcls.email_normalized,
+    DATE_TRUNC('month', mcls.signup_date)::DATE AS signup_month,
+    mcls.acquisition_channel,
+    mcls.country_code,
+    mcls.customer_segment,
+    mcls.margin_segment,
+    mcls.revenue_quintile,
+    mcls.revenue_rank,
+    mcls.total_revenue_amount,
+    mcls.total_margin_amount,
+    mcls.ltv_after_fees_amount,
+    mcls.total_refund_events,
+    mcls.completed_order_count,
+    COALESCE(rr.revenue_30d_amount, 0) AS revenue_30d_amount,
+    COALESCE(rr.margin_30d_amount, 0) AS margin_30d_amount,
+    COALESCE(rr.order_count_30d, 0) AS order_count_30d,
+    rr.most_recent_revenue_date,
+    cc.conversion_rate AS cohort_conversion_rate,
+    cc.vip_rate AS cohort_vip_rate,
+    cc.negative_margin_rate AS cohort_negative_margin_rate,
+    cc.revenue_per_customer AS cohort_revenue_per_customer,
+    cc.cohort_margin_rate,
+    cc.cohort_ltv_rank_in_month,
+    CASE
+        WHEN mcls.customer_segment = 'vip'
+            AND COALESCE(rr.revenue_30d_amount, 0) > 0
+            AND mcls.margin_segment <> 'negative_margin'
+            THEN 'healthy_vip'
+        WHEN mcls.total_refund_events >= 3
+            OR cc.negative_margin_rate >= 0.25
+            THEN 'at_risk'
+        WHEN COALESCE(rr.order_count_30d, 0) = 0
+            AND mcls.customer_age_days > 90
+            THEN 'dormant'
+        ELSE 'monitor'
+    END AS health_status,
+    (
+        COALESCE(mcls.ltv_after_fees_amount, 0) * 0.50
+        + COALESCE(rr.revenue_30d_amount, 0) * 0.30
+        + COALESCE(cc.conversion_rate, 0) * 100 * 0.10
+        - COALESCE(mcls.total_refund_events, 0) * 10
+        - COALESCE(cc.negative_margin_rate, 0) * 100 * 0.10
+    ) AS health_score
+FROM mart_customer_ltv_segments mcls
+LEFT JOIN recent_revenue rr
+    ON rr.customer_id = mcls.customer_id
+LEFT JOIN cohort_context cc
+    ON cc.signup_month = DATE_TRUNC('month', mcls.signup_date)::DATE
+    AND cc.acquisition_channel = mcls.acquisition_channel
+    AND cc.country_code = mcls.country_code;
+
+-- View 8: executive rollup on top of the new segment health model plus facts.
+-- Tests lineage through second-order downstream dependencies, nested CTEs,
+-- rankings, conditional scoring, and metrics that combine mart and fact fields.
+CREATE VIEW rpt_executive_revenue_dashboard AS
+WITH segment_rollup AS (
+    SELECT
+        mshs.signup_month,
+        mshs.acquisition_channel,
+        mshs.country_code,
+        mshs.customer_segment,
+        mshs.health_status,
+        COUNT(*) AS customer_count,
+        SUM(mshs.total_revenue_amount) AS segment_total_revenue_amount,
+        SUM(mshs.total_margin_amount) AS segment_total_margin_amount,
+        SUM(mshs.ltv_after_fees_amount) AS segment_ltv_after_fees_amount,
+        SUM(mshs.revenue_30d_amount) AS segment_revenue_30d_amount,
+        AVG(mshs.health_score) AS avg_health_score,
+        COUNT(*) FILTER (WHERE mshs.health_status = 'at_risk') AS at_risk_customer_count,
+        COUNT(*) FILTER (WHERE mshs.health_status = 'healthy_vip') AS healthy_vip_customer_count
+    FROM mart_segment_health_snapshot mshs
+    GROUP BY
+        mshs.signup_month,
+        mshs.acquisition_channel,
+        mshs.country_code,
+        mshs.customer_segment,
+        mshs.health_status
+),
+fact_monthly AS (
+    SELECT
+        fcrd.revenue_month,
+        SUM(fcrd.daily_revenue_amount) AS platform_revenue_amount,
+        SUM(fcrd.daily_margin_amount) AS platform_margin_amount,
+        SUM(fcrd.daily_order_count) AS platform_order_count,
+        SUM(fcrd.refund_event_count) AS platform_refund_event_count
+    FROM fct_customer_revenue_daily fcrd
+    GROUP BY fcrd.revenue_month
+)
+SELECT
+    sr.signup_month,
+    sr.acquisition_channel,
+    sr.country_code,
+    sr.customer_segment,
+    sr.health_status,
+    sr.customer_count,
+    sr.segment_total_revenue_amount,
+    sr.segment_total_margin_amount,
+    sr.segment_ltv_after_fees_amount,
+    sr.segment_revenue_30d_amount,
+    sr.avg_health_score,
+    sr.at_risk_customer_count,
+    sr.healthy_vip_customer_count,
+    fm.platform_revenue_amount,
+    fm.platform_margin_amount,
+    fm.platform_order_count,
+    fm.platform_refund_event_count,
+    sr.segment_total_revenue_amount / NULLIF(fm.platform_revenue_amount, 0) AS segment_revenue_share,
+    sr.segment_total_margin_amount / NULLIF(sr.segment_total_revenue_amount, 0) AS segment_margin_rate,
+    sr.at_risk_customer_count::NUMERIC / NULLIF(sr.customer_count, 0) AS segment_at_risk_rate,
+    CASE
+        WHEN sr.avg_health_score >= 750
+            AND sr.at_risk_customer_count::NUMERIC / NULLIF(sr.customer_count, 0) < 0.10
+            THEN 'invest'
+        WHEN sr.segment_margin_rate < 0
+            OR sr.at_risk_customer_count::NUMERIC / NULLIF(sr.customer_count, 0) >= 0.30
+            THEN 'intervene'
+        WHEN sr.segment_revenue_30d_amount = 0 THEN 'watch'
+        ELSE 'maintain'
+    END AS executive_action,
+    DENSE_RANK() OVER (
+        PARTITION BY sr.signup_month
+        ORDER BY sr.segment_total_revenue_amount DESC
+    ) AS segment_revenue_rank,
+    SUM(sr.segment_total_revenue_amount) OVER (
+        PARTITION BY sr.signup_month
+        ORDER BY sr.segment_total_revenue_amount DESC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS cumulative_revenue_by_month_rank
+FROM segment_rollup sr
+LEFT JOIN fact_monthly fm
+    ON fm.revenue_month = sr.signup_month;

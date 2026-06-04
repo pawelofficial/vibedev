@@ -31,7 +31,7 @@ def set_output_dir(path: str | Path) -> None:
     """Change where agents write code and logs (default: ./vibedev-output/)."""
     import vibedev.config as cfg
 
-    cfg.OUTPUT_DIR = Path(path)
+    cfg.OUTPUT_DIR = Path(path).resolve()  # absolute: agents are handed absolute file paths
     cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     cfg.LOGS_DIR = cfg.OUTPUT_DIR / "logs"
     cfg.LOGS_DIR.mkdir(exist_ok=True)

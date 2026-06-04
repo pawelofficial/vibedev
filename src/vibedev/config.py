@@ -45,11 +45,22 @@ CONFIG = {
     "extra_dirs": [str(REPO_ROOT)],
 }
 
-OUTPUT_DIR = Path("vibedev-output")
+# Absolute, so every agent path can be anchored here. The SDK's file tools require
+# absolute paths; if we hand agents a project-relative path (e.g. "pkg/foo.py") they each
+# pick their own base dir — often REPO_ROOT — and scatter files outside the output dir.
+OUTPUT_DIR = Path("vibedev-output").resolve()
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 LOGS_DIR = OUTPUT_DIR / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
+
+
+def abs_path(rel: str) -> str:
+    """Resolve a project-relative spec path (``FileSpec.path``) to an absolute path string
+    under the current ``OUTPUT_DIR``. Read this at call time so it honours a runtime
+    ``set_output_dir`` reassignment. Agents must be given these absolute paths so they read
+    and write at one unambiguous location instead of guessing a base directory."""
+    return str((OUTPUT_DIR / rel).resolve())
 
 MAX_ITERATIONS = 5
 

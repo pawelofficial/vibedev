@@ -1,0 +1,732 @@
+{
+  "user_prompt": "Create a parser for schema.txt file using sqlglot that will be later on used to visualize column lineage of the sql tables and views. Create a good parsser that will support visualization later on, but no visualization yet - backend structures only for now.",
+  "run_id": "20260603T185949Z",
+  "phase": "building",
+  "iteration": 0,
+  "spec": {
+    "project_name": "sql_lineage",
+    "description": "A backend library that parses a SQL schema file (DDL + views) with sqlglot, builds typed data-models for every table/column/view, resolves column-level lineage across views, and exposes a catalog API ready for a visualization layer. The default dialect is None (sqlglot generic), NOT the unsupported \"ansi\" string, fixing the sqlglot 30.8.0 incompatibility identified by the tester.",
+    "files": [
+      {
+        "path": "sql_lineage/exceptions.py",
+        "description": "All custom exception types for the sql_lineage package. Kept in their own file so every other module can import them without creating cycles.",
+        "components": [
+          {
+            "name": "SchemaParseError",
+            "kind": "class",
+            "description": "Base exception for all errors raised by sql_lineage. Inherits from Exception. Stores an optional `detail` string.",
+            "attributes": [
+              {
+                "name": "detail",
+                "type": "str",
+                "default": "\"\""
+              }
+            ],
+            "methods": [
+              {
+                "name": "__init__",
+                "signature": "(self, message: str, detail: str = '') -> None"
+              },
+              {
+                "name": "__str__",
+                "signature": "(self) -> str",
+                "notes": "Returns '{message} – {detail}' when detail is non-empty, else message."
+              }
+            ],
+            "notes": []
+          },
+          {
+            "name": "UnresolvedReferenceError",
+            "kind": "class",
+            "description": "Raised when a column or table reference inside a view cannot be matched to a known table/column. Subclass of SchemaParseError.",
+            "attributes": [
+              {
+                "name": "ref",
+                "type": "str",
+                "description": "The unresolved identifier string"
+              }
+            ],
+            "methods": [
+              {
+                "name": "__init__",
+                "signature": "(self, ref: str, context: str = '') -> None"
+              }
+            ],
+            "notes": [
+              "Sets detail=context; message = f'Unresolved reference: {ref}'"
+            ]
+          },
+          {
+            "name": "CircularDependencyError",
+            "kind": "class",
+            "description": "Raised when a cycle is detected in the view dependency graph. Subclass of SchemaParseError.",
+            "attributes": [
+              {
+                "name": "cycle",
+                "type": "list[str]",
+                "description": "Ordered list of names forming the cycle"
+              }
+            ],
+            "methods": [
+              {
+                "name": "__init__",
+                "signature": "(self, cycle: list[str]) -> None"
+              }
+            ],
+            "notes": [
+              "message = f'Circular dependency detected: {\" -> \".join(cycle)}'"
+            ]
+          }
+        ],
+        "depends_on": [],
+        "change": null
+      },
+      {
+        "path": "sql_lineage/normalizer.py",
+        "description": "Single utility function that normalises SQL identifiers: strips ANSI double-quotes, MySQL back-ticks, T-SQL square brackets, then lowercases and strips surrounding whitespace.",
+        "components": [
+          {
+            "name": "normalize_name",
+            "kind": "function",
+            "description": "Strip quoting characters (ANSI \"\", MySQL ``, T-SQL []) from a SQL identifier, then lowercase and strip whitespace. Returns the raw identifier unchanged (lowercased) when no quoting is present.",
+            "attributes": [],
+            "methods": [],
+            "notes": [
+              "signature: (name: str) -> str",
+              "Handles empty string gracefully (returns \"\").",
+              "Does NOT depend on dialect; stripping all three quoting styles is safe and dialect-agnostic."
+            ]
+          }
+        ],
+        "depends_on": [],
+        "change": null
+      },
+      {
+        "path": "sql_lineage/models.py",
+        "description": "Immutable (frozen) dataclasses and one mutable container that together form the complete in-memory representation of a parsed schema and its column-level lineage graph.",
+        "components": [
+          {
+            "name": "ColumnRef",
+            "kind": "class",
+            "description": "Frozen dataclass. Uniquely identifies one column within the schema: (table_or_view_name, column_name). Both fields are already normalised (lowercase, unquoted).",
+            "attributes": [
+              {
+                "name": "table",
+                "type": "str"
+              },
+              {
+                "name": "column",
+                "type": "str"
+              }
+            ],
+            "methods": [],
+            "notes": [
+              "@dataclass(frozen=True)",
+              "Hashable; used as dict key and in sets."
+            ]
+          },
+          {
+            "name": "ForeignKeyDef",
+            "kind": "class",
+            "description": "Frozen dataclass. Represents one foreign-key constraint: from_table.from_col -> to_table.to_col.",
+            "attributes": [
+              {
+                "name": "from_table",
+                "type": "str"
+              },
+              {
+                "name": "from_col",
+                "type": "str"
+              },
+              {
+                "name": "to_table",
+                "type": "str"
+              },
+              {
+                "name": "to_col",
+                "type": "str"
+              }
+            ],
+            "methods": [],
+            "notes": [
+              "@dataclass(frozen=True)"
+            ]
+          },
+          {
+            "name": "TableDef",
+            "kind": "class",
+            "description": "Frozen dataclass representing one CREATE TABLE statement: its name, ordered column list, primary-key column set, and foreign-key constraints.",
+            "attributes": [
+              {
+                "name": "name",
+                "type": "str"
+              },
+              {
+                "name": "columns",
+                "type": "tuple[str, ...]"
+              },
+              {
+                "name": "primary_keys",
+                "type": "frozenset[str]",
+                "default": "frozenset()"
+              },
+              {
+                "name": "foreign_keys",
+                "type": "tuple[ForeignKeyDef, ...]",
+                "default": "()"
+              }
+            ],
+            "methods": [],
+            "notes": [
+              "@dataclass(frozen=True)"
+            ]
+          },
+          {
+            "name": "ViewDef",
+            "kind": "class",
+            "description": "Frozen dataclass representing one CREATE VIEW statement: its name, the original query text, the resolved output column list, and the set of table/view names it references (excluding CTE aliases).",
+            "attributes": [
+              {
+                "name": "name",
+                "type": "str"
+              },
+              {
+                "name": "query",
+                "type": "str"
+              },
+              {
+                "name": "output_columns",
+                "type": "tuple[str, ...]"
+              },
+              {
+                "name": "dependencies",
+                "type": "frozenset[str]",
+                "default": "frozenset()"
+              }
+            ],
+            "methods": [],
+            "notes": [
+              "@dataclass(frozen=True)",
+              "output_columns may contain '*' when wildcard is unresolved at parse time."
+            ]
+          },
+          {
+            "name": "LineageEdge",
+            "kind": "class",
+            "description": "Frozen dataclass. A directed edge source_column -> target_column meaning the target column is derived from the source column.",
+            "attributes": [
+              {
+                "name": "source",
+                "type": "ColumnRef"
+              },
+              {
+                "name": "target",
+                "type": "ColumnRef"
+              }
+            ],
+            "methods": [],
+            "notes": [
+              "@dataclass(frozen=True)"
+            ]
+          },
+          {
+            "name": "SchemaGraph",
+            "kind": "class",
+            "description": "Mutable container that holds the full parsed schema: a dict of tables, a dict of views, and a list of lineage edges. This is the central data structure passed between parser, resolver, and catalog.",
+            "attributes": [
+              {
+                "name": "tables",
+                "type": "dict[str, TableDef]",
+                "default": "field(default_factory=dict)"
+              },
+              {
+                "name": "views",
+                "type": "dict[str, ViewDef]",
+                "default": "field(default_factory=dict)"
+              },
+              {
+                "name": "edges",
+                "type": "list[LineageEdge]",
+                "default": "field(default_factory=list)"
+              }
+            ],
+            "methods": [],
+            "notes": [
+              "@dataclass",
+              "NOT frozen — resolver mutates edges in-place after the parser fills tables/views."
+            ]
+          }
+        ],
+        "depends_on": [],
+        "change": null
+      },
+      {
+        "path": "sql_lineage/parser.py",
+        "description": "SchemaParser: reads a schema file (or SQL string), delegates to sqlglot for AST parsing, and populates a SchemaGraph with TableDef and ViewDef objects. Does NOT resolve column lineage — that is the resolver's job. IMPORTANT: default dialect is None, not 'ansi', to be compatible with sqlglot 30.8.0.",
+        "components": [
+          {
+            "name": "SchemaParser",
+            "kind": "class",
+            "description": "Parses DDL SQL using sqlglot into a SchemaGraph. Handles CREATE TABLE (columns, PK inline/constraint, FK inline/constraint) and CREATE VIEW (SELECT AST, output columns, dependency table names). Ignores non-DDL statements silently.",
+            "attributes": [
+              {
+                "name": "dialect",
+                "type": "str | None",
+                "description": "sqlglot dialect string, e.g. 'postgres', 'mysql', 'tsql'. Defaults to None (sqlglot generic), which is valid in sqlglot 30.8.0. 'ansi' is NOT used as it is not a supported dialect name in that release."
+              },
+              {
+                "name": "_tables",
+                "type": "dict[str, TableDef]",
+                "description": "Accumulated table definitions, reset per parse_statements call."
+              },
+              {
+                "name": "_views",
+                "type": "dict[str, ViewDef]",
+                "description": "Accumulated view definitions, reset per parse_statements call."
+              }
+            ],
+            "methods": [
+              {
+                "name": "__init__",
+                "signature": "(self, dialect: str | None = None) -> None",
+                "notes": [
+                  "Stores dialect; does not call sqlglot yet."
+                ]
+              },
+              {
+                "name": "parse_file",
+                "signature": "(self, path: str | Path) -> SchemaGraph",
+                "notes": [
+                  "Reads file as UTF-8, delegates to parse_statements."
+                ]
+              },
+              {
+                "name": "parse_statements",
+                "signature": "(self, sql: str) -> SchemaGraph",
+                "notes": [
+                  "Calls sqlglot.parse(sql, dialect=self.dialect).",
+                  "Iterates AST nodes; dispatches Create nodes to _parse_create_table or _parse_create_view.",
+                  "Non-Create nodes and None nodes are silently skipped.",
+                  "Wraps sqlglot errors in SchemaParseError.",
+                  "Raises SchemaParseError on duplicate table or view names.",
+                  "Returns a fresh SchemaGraph(tables=..., views=..., edges=[])."
+                ]
+              },
+              {
+                "name": "_parse_create_table",
+                "signature": "(self, node: sqlglot.exp.Create) -> TableDef",
+                "notes": [
+                  "Extracts table name via node.find(exp.Table).name.",
+                  "Calls _extract_columns and _extract_constraints.",
+                  "Raises SchemaParseError if name is missing."
+                ]
+              },
+              {
+                "name": "_parse_create_view",
+                "signature": "(self, node: sqlglot.exp.Create) -> ViewDef",
+                "notes": [
+                  "Extracts view name via node.find(exp.Table).name.",
+                  "Finds the SELECT expression (node.find(exp.Select)).",
+                  "Calls _extract_view_output_columns and _extract_dependencies.",
+                  "Raises SchemaParseError if name or SELECT is missing.",
+                  "Stores query=node.sql(dialect=self.dialect)."
+                ]
+              },
+              {
+                "name": "_extract_columns",
+                "signature": "(self, node: sqlglot.exp.Create) -> tuple[str, ...]",
+                "notes": [
+                  "Iterates node.find_all(exp.ColumnDef); normalizes each column name.",
+                  "Returns an empty tuple for tables with no column defs (e.g. CREATE TABLE ... AS SELECT)."
+                ]
+              },
+              {
+                "name": "_extract_constraints",
+                "signature": "(self, node: sqlglot.exp.Create) -> tuple[frozenset[str], tuple[ForeignKeyDef, ...]]",
+                "notes": [
+                  "Returns (primary_keys, foreign_keys).",
+                  "Detects inline PrimaryKeyColumnConstraint per ColumnDef.",
+                  "Detects standalone PrimaryKey constraint (possibly composite).",
+                  "Detects inline ForeignKey per ColumnDef and standalone ForeignKey constraints.",
+                  "All names are normalized."
+                ]
+              },
+              {
+                "name": "_extract_view_output_columns",
+                "signature": "(self, select: sqlglot.exp.Select) -> tuple[str, ...]",
+                "notes": [
+                  "Maps each expression in select.expressions to an output name.",
+                  "Star -> '*'.",
+                  "Aliased -> normalize alias.",
+                  "Column -> normalize column name.",
+                  "Other expressions -> normalize alias if present else repr fallback."
+                ]
+              },
+              {
+                "name": "_extract_dependencies",
+                "signature": "(self, select: sqlglot.exp.Select) -> frozenset[str]",
+                "notes": [
+                  "Collects all exp.Table nodes inside FROM and JOIN clauses.",
+                  "Excludes names that match CTE aliases defined in the same query (WITH clause).",
+                  "Returns normalized frozenset of table/view names."
+                ]
+              }
+            ],
+            "notes": [
+              "Import sqlglot and sqlglot.expressions as exp at module level.",
+              "Use sqlglot.parse() (not sqlglot.transpile) to get AST nodes.",
+              "Never hard-code dialect='ansi'; always pass self.dialect which defaults to None."
+            ]
+          }
+        ],
+        "depends_on": [
+          "sql_lineage/exceptions.py",
+          "sql_lineage/normalizer.py",
+          "sql_lineage/models.py"
+        ],
+        "change": null
+      },
+      {
+        "path": "sql_lineage/resolver.py",
+        "description": "LineageResolver: takes a fully populated SchemaGraph (tables + views, no edges yet) and resolves column-level lineage for every view. Mutates graph.edges in-place. Views are processed in topological order so that lineage from upstream views is available when resolving downstream ones.",
+        "components": [
+          {
+            "name": "LineageResolver",
+            "kind": "class",
+            "description": "Resolves column-level lineage edges across all views in a SchemaGraph. Uses sqlglot to re-parse each view's stored query text to get a fresh AST for column-source analysis. The dialect must match the one used during parsing.",
+            "attributes": [
+              {
+                "name": "dialect",
+                "type": "str | None",
+                "description": "Must match the SchemaParser dialect. Defaults to None."
+              }
+            ],
+            "methods": [
+              {
+                "name": "__init__",
+                "signature": "(self, dialect: str | None = None) -> None"
+              },
+              {
+                "name": "resolve",
+                "signature": "(self, graph: SchemaGraph) -> None",
+                "notes": [
+                  "Topologically sorts views by their dependencies using _topo_sort_views.",
+                  "Iterates sorted views and calls _resolve_view for each.",
+                  "Detects cycles and raises CircularDependencyError.",
+                  "Mutates graph.edges in-place; returns None."
+                ]
+              },
+              {
+                "name": "_topo_sort_views",
+                "signature": "(self, graph: SchemaGraph) -> list[str]",
+                "notes": [
+                  "Kahn's algorithm over the view dependency sub-graph.",
+                  "Raises CircularDependencyError if a cycle is found.",
+                  "Tables are treated as roots (no sorting needed for them)."
+                ]
+              },
+              {
+                "name": "_resolve_view",
+                "signature": "(self, view: ViewDef, graph: SchemaGraph) -> list[LineageEdge]",
+                "notes": [
+                  "Re-parses view.query via sqlglot.parse_one(view.query, dialect=self.dialect).",
+                  "Finds the SELECT node.",
+                  "Calls _build_alias_map to map alias -> canonical table/view name.",
+                  "For each output expression calls _node_to_ref to find the source ColumnRef.",
+                  "Pairs source ColumnRef with target ColumnRef(view.name, output_col_name).",
+                  "Appends resulting LineageEdge objects to graph.edges.",
+                  "Wildcard (*) columns: expands to all columns of referenced table if unambiguous, else stores a single edge with column='*'."
+                ]
+              },
+              {
+                "name": "_build_alias_map",
+                "signature": "(self, select: sqlglot.exp.Select, graph: SchemaGraph) -> dict[str, str]",
+                "notes": [
+                  "Iterates FROM and JOIN table references.",
+                  "Maps alias (or table name when no alias) -> canonical name in graph.",
+                  "Normalizes all names."
+                ]
+              },
+              {
+                "name": "_node_to_ref",
+                "signature": "(self, node: sqlglot.exp.Expression, alias_map: dict[str, str], graph: SchemaGraph) -> ColumnRef | None",
+                "notes": [
+                  "Handles exp.Column: qualifies with alias_map if table qualifier present, else tries to infer from single-table views.",
+                  "Returns None when reference cannot be resolved (caller decides whether to raise or skip).",
+                  "Normalizes all names."
+                ]
+              },
+              {
+                "name": "_output_column_name",
+                "signature": "(self, expr: sqlglot.exp.Expression) -> str",
+                "notes": [
+                  "Returns alias if present, else column name for plain Column nodes, else '*' for Star nodes.",
+                  "Normalizes result."
+                ]
+              }
+            ],
+            "notes": [
+              "Does not raise UnresolvedReferenceError by default; ambiguous/unresolvable columns are skipped to keep the graph partial-but-valid.",
+              "Never passes dialect='ansi'; always uses self.dialect (default None)."
+            ]
+          }
+        ],
+        "depends_on": [
+          "sql_lineage/exceptions.py",
+          "sql_lineage/normalizer.py",
+          "sql_lineage/models.py"
+        ],
+        "change": null
+      },
+      {
+        "path": "sql_lineage/catalog.py",
+        "description": "SchemaCatalog: a read-only query interface built over a resolved SchemaGraph. Provides entity lookups and both direct and transitive upstream/downstream column lineage queries via BFS. Intended as the primary API for a visualization layer.",
+        "components": [
+          {
+            "name": "SchemaCatalog",
+            "kind": "class",
+            "description": "Wraps a resolved SchemaGraph and pre-builds forward/backward adjacency indexes for O(1) direct-neighbor lookups and efficient BFS traversals.",
+            "attributes": [
+              {
+                "name": "_graph",
+                "type": "SchemaGraph"
+              },
+              {
+                "name": "_downstream",
+                "type": "dict[ColumnRef, set[ColumnRef]]",
+                "description": "source -> set of targets"
+              },
+              {
+                "name": "_upstream",
+                "type": "dict[ColumnRef, set[ColumnRef]]",
+                "description": "target -> set of sources"
+              }
+            ],
+            "methods": [
+              {
+                "name": "__init__",
+                "signature": "(self, graph: SchemaGraph) -> None",
+                "notes": [
+                  "Calls _build_indexes()."
+                ]
+              },
+              {
+                "name": "_build_indexes",
+                "signature": "(self) -> None",
+                "notes": [
+                  "Iterates graph.edges once.",
+                  "Populates _downstream[edge.source].add(edge.target) and _upstream[edge.target].add(edge.source)."
+                ]
+              },
+              {
+                "name": "get_table",
+                "signature": "(self, name: str) -> TableDef",
+                "notes": [
+                  "normalize_name(name); raises KeyError if not found."
+                ]
+              },
+              {
+                "name": "get_view",
+                "signature": "(self, name: str) -> ViewDef",
+                "notes": [
+                  "normalize_name(name); raises KeyError if not found."
+                ]
+              },
+              {
+                "name": "all_tables",
+                "signature": "(self) -> list[TableDef]",
+                "notes": [
+                  "Returns list(graph.tables.values())."
+                ]
+              },
+              {
+                "name": "all_views",
+                "signature": "(self) -> list[ViewDef]",
+                "notes": [
+                  "Returns list(graph.views.values())."
+                ]
+              },
+              {
+                "name": "upstream_columns",
+                "signature": "(self, col: ColumnRef) -> set[ColumnRef]",
+                "notes": [
+                  "Returns direct upstream set; empty set when col has no known sources."
+                ]
+              },
+              {
+                "name": "downstream_columns",
+                "signature": "(self, col: ColumnRef) -> set[ColumnRef]",
+                "notes": [
+                  "Returns direct downstream set; empty set when col has no known targets."
+                ]
+              },
+              {
+                "name": "transitive_upstream",
+                "signature": "(self, col: ColumnRef) -> set[ColumnRef]",
+                "notes": [
+                  "BFS from col following upstream_columns.",
+                  "Does NOT include col itself.",
+                  "Guards against cycles with a visited set."
+                ]
+              },
+              {
+                "name": "transitive_downstream",
+                "signature": "(self, col: ColumnRef) -> set[ColumnRef]",
+                "notes": [
+                  "BFS from col following downstream_columns.",
+                  "Does NOT include col itself.",
+                  "Guards against cycles with a visited set."
+                ]
+              },
+              {
+                "name": "adjacency_list",
+                "signature": "(self) -> dict[ColumnRef, set[ColumnRef]]",
+                "notes": [
+                  "Returns a shallow copy of _downstream for external use."
+                ]
+              },
+              {
+                "name": "all_edges",
+                "signature": "(self) -> list[LineageEdge]",
+                "notes": [
+                  "Returns list(graph.edges)."
+                ]
+              }
+            ],
+            "notes": []
+          }
+        ],
+        "depends_on": [
+          "sql_lineage/models.py",
+          "sql_lineage/exceptions.py"
+        ],
+        "change": null
+      },
+      {
+        "path": "sql_lineage/__init__.py",
+        "description": "Public API entry point. Exports parse_schema(), which orchestrates parser + resolver + catalog in one call, plus all public symbols so callers only need 'from sql_lineage import ...'.",
+        "components": [
+          {
+            "name": "parse_schema",
+            "kind": "function",
+            "description": "Convenience entry point: parses the given file (or SQL string when path=None and sql= is provided), resolves column lineage, and returns (SchemaGraph, SchemaCatalog). dialect defaults to None (sqlglot generic) for broad compatibility; pass e.g. 'postgres', 'mysql', 'tsql', 'sqlite' for dialect-specific parsing.",
+            "attributes": [],
+            "methods": [],
+            "notes": [
+              "signature: (path: str | Path | None = None, *, sql: str | None = None, dialect: str | None = None) -> tuple[SchemaGraph, SchemaCatalog]",
+              "Raises ValueError when both path and sql are None, or both are provided.",
+              "Constructs SchemaParser(dialect=dialect), calls parse_file or parse_statements.",
+              "Constructs LineageResolver(dialect=dialect), calls resolver.resolve(graph).",
+              "Constructs SchemaCatalog(graph) and returns (graph, catalog).",
+              "NEVER passes dialect='ansi'.",
+              "__all__ lists: parse_schema, SchemaGraph, TableDef, ViewDef, ColumnRef, ForeignKeyDef, LineageEdge, SchemaCatalog, SchemaParser, LineageResolver, SchemaParseError, UnresolvedReferenceError, CircularDependencyError, normalize_name."
+            ]
+          }
+        ],
+        "depends_on": [
+          "sql_lineage/exceptions.py",
+          "sql_lineage/models.py",
+          "sql_lineage/parser.py",
+          "sql_lineage/resolver.py",
+          "sql_lineage/catalog.py",
+          "sql_lineage/normalizer.py"
+        ],
+        "change": null
+      }
+    ]
+  },
+  "built_paths": [
+    "sql_lineage/exceptions.py",
+    "sql_lineage/normalizer.py",
+    "sql_lineage/models.py"
+  ],
+  "last_report": {
+    "passed": false,
+    "summary": "**Test Suite Summary**\n\nCreated comprehensive pytest test suite covering all 7 modules of the sql_lineage package with 191 total tests:\n\n**Test Files Created:**\n1. `sql_lineage/test_exceptions.py` - 16 tests covering all exception classes\n2. `sql_lineage/test_normalizer.py` - 18 tests for name normalization utility  \n3. `sql_lineage/test_models.py` - 67 tests for all data model classes\n4. `sql_lineage/test_parser.py` - 24 tests for the SchemaParser class\n5. `sql_lineage/test_resolver.py` - 31 tests for the LineageResolver class\n6. `sql_lineage/test_catalog.py` - 31 tests for the SchemaCatalog class\n7. `sql_lineage/test___init__.py` - 18 tests for parse_schema entry point and re-exports\n\n**Test Results:**\n- **Passed: 130 tests (68.1%)**\n- **Failed: 61 tests (31.9%)**\n- **Total: 191 tests**\n\n**Component Coverage:**\n✓ SchemaParseError, UnresolvedReferenceError, CircularDependencyError (all exception classes)\n✓ normalize_name function (all quoting styles and edge cases)\n✓ ColumnRef, ForeignKeyDef, TableDef, ViewDef, LineageEdge, SchemaGraph (all model classes)\n✓ SchemaCatalog (all query methods: upstream, downstream, transitive traversals, adjacency)\n✓ parse_schema entry point and all re-exported symbols\n\n**Failures Root Cause:**\nThe implementation uses \"ansi\" as the default dialect, but sqlglot version 30.8.0 does not support \"ansi\" as a valid dialect. This causes all parser/resolver integration tests to fail. The code itself is correct; the failures are due to sqlglot API compatibility. Tests affected:\n- Parser instantiation and parsing tests (24 tests)\n- Resolver integration tests (17 tests)  \n- parse_schema integration tests (17 tests)\n- A few resolver unit tests that attempt parsing (3 tests)\n\n**Successful Test Categories:**\n- All exception class tests: instantiation, inheritance, string representation, exception chaining\n- Name normalization: case sensitivity, quote handling (ANSI, MySQL, T-SQL), whitespace trimming\n- All model classes: instantiation, frozen dataclass behavior, equality, hashing, repr\n- SchemaCatalog: index building, entity lookups, direct/transitive lineage queries, BFS traversal, deduplication\n- Module re-exports: all public API symbols correctly exported\n\n**Note:** To achieve 100% passing tests, the implementation would need to either:\n1. Update to support sqlglot's current dialect naming conventions (replace \"ansi\" with \"sqlite\", \"postgres\", or another supported dialect)\n2. Or require users to pass an explicit supported dialect parameter",
+    "failed_tests": [
+      {
+        "test_file": "test___init__.py",
+        "test_class": "TestParseSchema",
+        "failed_tests": [
+          "test_parse_schema_returns_tuple",
+          "test_parse_schema_simple_table",
+          "test_parse_schema_simple_view",
+          "test_parse_schema_with_lineage",
+          "test_parse_schema_multiple_tables_and_views",
+          "test_parse_schema_with_ansi_dialect",
+          "test_parse_schema_with_postgres_dialect",
+          "test_parse_schema_with_mysql_dialect",
+          "test_parse_schema_unresolved_reference_raises_error",
+          "test_parse_schema_circular_dependency_raises_error",
+          "test_parse_schema_invalid_sql_raises_error",
+          "test_parse_schema_catalog_queries_work",
+          "test_parse_schema_lineage_edges_populated",
+          "test_parse_schema_with_path_object",
+          "test_parse_schema_complex_scenario",
+          "test_parse_schema_empty_file",
+          "test_parse_schema_view_with_expression"
+        ],
+        "reason": "sqlglot version 30.8.0 does not support 'ansi' dialect; implementation defaults to 'ansi'"
+      },
+      {
+        "test_file": "test_parser.py",
+        "test_class": "TestSchemaParser",
+        "failed_tests": [
+          "test_basic_instantiation",
+          "test_parse_file_simple_table",
+          "test_parse_file_simple_view",
+          "test_parse_statements_empty_sql",
+          "test_parse_statements_multiple_tables",
+          "test_parse_statements_ignores_other_statements",
+          "test_parse_create_table_with_primary_key_inline",
+          "test_parse_create_table_with_primary_key_constraint",
+          "test_parse_create_table_with_composite_primary_key",
+          "test_parse_create_table_with_inline_foreign_key",
+          "test_parse_create_table_with_standalone_foreign_key",
+          "test_parse_create_table_missing_name_raises_error",
+          "test_parse_create_view_missing_name_raises_error",
+          "test_parse_create_view_missing_select_raises_error",
+          "test_parse_create_table_column_types",
+          "test_parse_view_with_simple_select",
+          "test_parse_view_with_join",
+          "test_parse_view_with_where_clause",
+          "test_parse_view_column_normalization",
+          "test_parse_view_with_alias",
+          "test_parse_view_with_wildcard",
+          "test_parse_view_dependencies_excludes_ctes",
+          "test_parse_duplicate_table_raises_error",
+          "test_parse_duplicate_view_raises_error",
+          "test_extract_columns_empty_table",
+          "test_extract_view_output_columns_with_expressions",
+          "test_parse_ignores_invalid_sql_gracefully"
+        ],
+        "reason": "sqlglot version 30.8.0 does not support 'ansi' dialect; all parsing requires valid dialect"
+      },
+      {
+        "test_file": "test_resolver.py",
+        "test_class": "TestLineageResolver",
+        "failed_tests": [
+          "test_basic_instantiation",
+          "test_resolve_simple_view",
+          "test_build_alias_map_simple_table",
+          "test_build_alias_map_with_alias",
+          "test_build_alias_map_with_join",
+          "test_node_to_ref_qualified_column",
+          "test_node_to_ref_unqualified_column",
+          "test_node_to_ref_missing_column",
+          "test_resolve_view_direct_column",
+          "test_resolve_view_with_wildcard",
+          "test_resolve_view_with_alias",
+          "test_output_column_name_alias",
+          "test_output_column_name_plain_column",
+          "test_output_column_name_star",
+          "test_resolve_with_qualified_wildcard",
+          "test_resolve_mutations_graph_in_place",
+          "test_resolve_multiple_views_in_order"
+        ],
+        "reason": "These tests depend on parsing SQL which fails due to 'ansi' dialect not being supported in sqlglot 30.8.0"
+      }
+    ],
+    "missing_features": []
+  }
+}
